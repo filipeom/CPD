@@ -4,9 +4,18 @@
 #define RAND01 ((double)random() / (double)RAND_MAX)
 #define DEBUG  1
 
-/* global variables */
-double **A, **B, **L, **R;
+// global variables ----------------------------------------
+struct matrix {
+  int l;
+  int c;
+  double **d;
+};
 
+struct matrix *A, *B;
+struct matrix *Lt, *L;
+struct matrix *Rt, *R;
+
+// parsing helpers -----------------------------------------
 int parse_int(FILE *fp) {
   int value;
   if (1 != fscanf(fp, "%d", &value)) {
@@ -25,50 +34,57 @@ double parse_double(FILE *fp) {
   return value;
 }
 
-double **new_matrix(int l, int c) {
+// matrix helpers ------------------------------------------
+struct matrix *new_matrix(int l, int c) {
   int i, j;
 
-  double **matrix = (double **) malloc(sizeof(double *) * l);
-  if (NULL == matrix)
+  struct matrix *m = (struct matrix *) malloc(sizeof(struct matrix));
+  m->l = l;
+  m->c = c;
+  m->d = (double **) malloc(sizeof(double *) * l);
+  if (NULL == m->d)
     return NULL;
 
   for (i = 0; i < l; i++) {
-    matrix[i] = (double *) malloc(sizeof(double) * c);
+    m->d[i] = (double *) malloc(sizeof(double) * c);
     for (j = 0; j < c; j++) {
-      matrix[i][j] = 0;  
+      m->d[i][j] = 0;  
     }
   }
 
-  return matrix;
+  return m;
 }
 
-void delete_matrix(double **matrix, int l) {
+void del_matrix(struct matrix *m) {
   int i;
 
-  for (i = 0; i < l; i++)
-    free(matrix[i]);
-  free(matrix);
+  for (i = 0; i < m->l; i++)
+    free(m->d[i]);
+  free(m->d);
+  free(m);
 }
 
-void copy_matrix(double **from, double **to, int l, int c) {
+// needed?
+void cpy_matrix(struct matrix *from, struct matrix *to) {
   int i, j;
-  
-  for (i = 0; i < l; i++)
-    for (j = 0; j < c; j++)
-      from[i][j] = to[i][j];
+
+  for (i = 0; i < from->l; i++)
+    for (j = 0; j < from->c; j++)
+      from->d[i][j] = to->d[i][j];
 }
 
-void print_matrix(double **matrix, int l, int c) {
+void print_matrix(struct matrix *m) {
   int i, j;
 
-  for (i = 0; i < l; i++) {
-    for (j= 0; j < c; j++) {
-      printf("%1.6lf ", matrix[i][j]);
+  for (i = 0; i < m->l; i++) {
+    for (j= 0; j < m->c; j++) {
+      printf("%1.6lf ", m->d[i][j]);
     }
     printf("\n");
   }
 }
 
+// matrix operations ---------------------------------------
 void random_fill_LR(int nU, int nI, int nF) {
   int i, j;
 
@@ -76,32 +92,83 @@ void random_fill_LR(int nU, int nI, int nF) {
 
   for (i = 0; i < nU; i++)
     for (j = 0; j < nF; j++)
-      L[i][j] = RAND01 / (double) nF;
+      L->d[i][j] = RAND01 / (double) nF;
   for (i = 0; i < nF; i++)
     for (j = 0; j < nI; j++)
-      R[i][j] = RAND01 / (double) nF;
+      R->d[i][j] = RAND01 / (double) nF;
 }
 
-void matrix_multiply(int nU, int nI, int nF) {
+void mult_matrix(int nU, int nI, int nF) {
   int i, j, k;
 
   for (i = 0; i < nU; i++) {
     for (j = 0; j < nI; j++) {
       double sum = 0;
       for (k = 0; k < nF; k++) {
-        sum += L[i][k] * R[k][j];
+        sum += L->d[i][k] * R->d[k][j];
       }
-      B[i][j] = sum;
+      B->d[i][j] = sum;
     }
   }
 }
 
+void mat_fact(int iters, double a) {
+  int i, j, k;
+  struct matrix *tmp;
+
+  while(iters-- <= 0) {
+    tmp = L;
+    L = Lt;
+    Lt = tmp;
+
+    for (i = 0; i < L->l; i++) {
+      for (k = 0; k < L->c; k++) {
+        double sum = 0;
+        for (j = 0; j < R->c; j++) {
+          if (A->d[i][j] == 0)
+            continue;
+          sum += 2*(A->d[i][j] - B->d[i][j])*(-R->d[k][j]);
+        }
+        L->d[i][k] = Lt->d[i][k] - (a * sum);
+      }
+    }
+
+    tmp = R;
+    R = Rt;
+    Rt = tmp;
+
+    for (k = 0; k < R->l; k++) {
+      for (j = 0; j < R->c; j++) {
+        double sum = 0;
+        for (i = 0; i < L->l; i++) {
+          if (A->d[i][j] == 0)
+            continue;
+
+          sum += 2*(A->d[i][j] - B->d[i][j])*(-L->d[i][k]);
+        }
+        R->d[k][j] = Rt->d[k][j] - (a * sum);
+      }
+    }
+
+    for (i = 0; i < L->l; i++) {
+      for (j = 0; j < R->c; j++) {
+        double sum = 0;
+        for (k = 0; k < L->c; k++) {
+          sum += L->d[i][k] * R->d[k][j];
+        }
+        B->d[i][j] = sum;
+      }
+    }
+  }
+}
+
+// main ----------------------------------------------------
 int main(int argc, char **argv) {
   FILE *fp;
   char *fname;
   double alpha;
-  int iters, nz_lines;
-  int n_users, n_items, n_feats;
+  int iters, lines;
+  int nUser, nItem, nFeat;
 
   if (argc != 2) {
     fprintf(stderr, "Usage: %s <instance>\n", argv[0]);
@@ -116,35 +183,50 @@ int main(int argc, char **argv) {
 
   iters = parse_int(fp);      /* iteration count */
   alpha = parse_double(fp);   /* alpha constant */
-  n_feats = parse_int(fp);    /* number of latent features to consider */
-  n_users = parse_int(fp);    /* number of rows */
-  n_items = parse_int(fp);    /* number of columns */
-  nz_lines = parse_int(fp);   /* number of non-zero elements in A */
+  nFeat = parse_int(fp);      /* number of latent features to consider */
+  nUser = parse_int(fp);      /* number of rows */
+  nItem = parse_int(fp);      /* number of columns */
+  lines = parse_int(fp);      /* number of non-zero elements in A */
 
   /* input matrix */
-  A = new_matrix(n_users, n_items);
+  A = new_matrix(nUser, nItem);
+
   /* parse non-zero values into input matrix */
-  while (nz_lines--)
-    A[parse_int(fp)][parse_int(fp)] = parse_double(fp);
+  while (lines--)
+    A->d[parse_int(fp)][parse_int(fp)] = parse_double(fp);
 
   if (0 != fclose(fp)) {
     fprintf(stderr, "Unable to flush file stream.\n");
     return 1;
   }
 
-  L = new_matrix(n_users, n_feats);
-  R = new_matrix(n_feats, n_items);
-  random_fill_LR(n_users, n_items, n_feats);
+  /* user feats to consider */
+  L = new_matrix(nUser, nFeat);
+  Lt = new_matrix(nUser, nFeat);
 
-  B = new_matrix(n_users, n_items);
-  matrix_multiply(n_users, n_items, n_feats);
-  print_matrix(B, n_users, n_items);
+  /* feats present in the items */
+  R = new_matrix(nFeat, nItem);
+  Rt = new_matrix(nFeat, nItem);
+
+  /* init L and R */
+  random_fill_LR(nUser, nItem, nFeat);
+
+  /* initial matrix B */
+  B = new_matrix(nUser, nItem);
+
+  /* matrix factorization */
+  mult_matrix(nUser, nItem, nFeat);
+
+  mat_fact(iters, alpha);
+
+  print_matrix(B);
 
   /* delete matrices */
-  delete_matrix(B, n_users);
-  delete_matrix(R, n_feats);
-  delete_matrix(L, n_users);
-  delete_matrix(A, n_users);
-
+  del_matrix(B);
+  del_matrix(Rt);
+  del_matrix(R);
+  del_matrix(Lt);
+  del_matrix(L);
+  del_matrix(A);
   return 0;
 }

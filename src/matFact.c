@@ -113,8 +113,7 @@ void matrix_fact_B(unsigned int nU, unsigned int nI,
       for (k = 0; k < nF; k++) {
         double sum = 0;
         for (j = 0; j < nI; j++) {
-          if (A[i][j])
-            sum += 2*(A[i][j] - B[i][j])*(-Rt[k][j]);
+          if (A[i][j]) sum += 2*(A[i][j] - B[i][j])*(-Rt[k][j]);
         }
         L[i][k] = Lt[i][k] - (a * sum);
       }
@@ -124,8 +123,7 @@ void matrix_fact_B(unsigned int nU, unsigned int nI,
       for (j = 0; j < nI; j++) {
         double sum = 0;
         for (i = 0; i < nU; i++) {
-          if (A[i][j])
-            sum += 2*(A[i][j] - B[i][j])*(-Lt[i][k]);
+          if (A[i][j]) sum += 2*(A[i][j] - B[i][j])*(-Lt[i][k]);
         }
         R[k][j] = Rt[k][j] - (a * sum);
       }

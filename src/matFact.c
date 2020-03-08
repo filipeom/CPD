@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define RAND01 ((double)random() / (double)RAND_MAX)
 
@@ -9,9 +10,9 @@ double **Lt, **L;
 double **Rt, **R;
 
 // parsing helpers -----------------------------------------
-int parse_int(FILE *fp) {
-  int value;
-  if (1 != fscanf(fp, "%d", &value)) {
+unsigned int parse_uint(FILE *fp) {
+  unsigned int value;
+  if (1 != fscanf(fp, "%u", &value)) {
     fprintf(stderr, "Unable to parse unsigned int.\n");
     exit(1);
   }
@@ -28,8 +29,8 @@ double parse_double(FILE *fp) {
 }
 
 // matrix helpers ------------------------------------------
-double **new_matrix(int l, int c) {
-  int i, j;
+double **new_matrix(unsigned int l, unsigned int c) {
+  size_t i, j;
 
   double **m = (double **) malloc(sizeof(double *) * l);
   if (NULL == m)
@@ -38,15 +39,15 @@ double **new_matrix(int l, int c) {
   for (i = 0; i < l; i++) {
     m[i] = (double *) malloc(sizeof(double) * c);
     for (j = 0; j < c; j++) {
-      m[i][j] = 0;  
+      m[i][j] = '\x00';
     }
   }
 
   return m;
 }
 
-void del_matrix(double **m, int l) {
-  int i;
+void delete_matrix(double **m, unsigned int l) {
+  size_t i;
 
   for (i = 0; i < l; i++)
     free(m[i]);
@@ -54,8 +55,8 @@ void del_matrix(double **m, int l) {
   return;
 }
 
-void print_matrix(double **m, int l, int c) {
-  int i, j;
+void print_matrix(double **m, unsigned int l, unsigned int c) {
+  size_t i, j;
 
   for (i = 0; i < l; i++) {
     for (j= 0; j < c; j++) {
@@ -67,8 +68,9 @@ void print_matrix(double **m, int l, int c) {
 }
 
 // matrix operations ---------------------------------------
-void random_fill_LR(int nU, int nI, int nF) {
-  int i, j;
+void random_fill_LR(unsigned int nU, unsigned int nI,
+    unsigned int nF) {
+  size_t i, j;
 
   srandom(0);
 
@@ -82,8 +84,9 @@ void random_fill_LR(int nU, int nI, int nF) {
   return;
 }
 
-void matrix_mult_LR(int nU, int nI, int nF) {
-  int i, j, k;
+void matrix_mult_LR(unsigned int nU, unsigned int nI,
+    unsigned int nF) {
+  size_t i, j, k;
 
   for (i = 0; i < nU; i++) {
     for (j = 0; j < nI; j++) {
@@ -97,11 +100,12 @@ void matrix_mult_LR(int nU, int nI, int nF) {
   return;
 }
 
-void matrix_fact_B(int nU, int nI, int nF, int n, double a) {
-  int i, j, k;
+void matrix_fact_B(unsigned int nU, unsigned int nI,
+    unsigned int nF, unsigned int n, double a) {
+  size_t i, j, k;
   double **tmp;
 
-  while(--n) {
+  do {
     tmp = L; L = Lt; Lt = tmp;
     tmp = R; R = Rt; Rt = tmp;
 
@@ -128,15 +132,15 @@ void matrix_fact_B(int nU, int nI, int nF, int n, double a) {
     }
 
     matrix_mult_LR(nU, nI, nF);
-  }
+  } while(--n);
   return;
 }
 
-void recommend(int l, int c) {
-  int i, j;
+void recommend(unsigned int l, unsigned int c) {
+  size_t i, j;
 
   for (i = 0; i < l; i++) {
-    int item = 0;
+    size_t item = 0;
     double max = -1.00;
     for (j = 0; j < c; j++) {
       if ((B[i][j] > max) && !A[i][j]) {
@@ -144,7 +148,7 @@ void recommend(int l, int c) {
         item = j;
       }
     }
-    printf("%d\n", item);
+    printf("%lu\n", item);
   }
   return;
 }
@@ -153,8 +157,9 @@ void recommend(int l, int c) {
 int main(int argc, char **argv) {
   FILE *fp;
   double alpha;
-  int N, lines, i, j;
-  int numU, numI, numF;
+  size_t i, j;
+  unsigned int N, lines;
+  unsigned int numU, numI, numF;
 
   if (argc != 2) {
     fprintf(stderr, "Usage: %s <instance>\n", argv[0]);
@@ -166,17 +171,17 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  N = parse_int(fp);
+  N = parse_uint(fp);
   alpha = parse_double(fp);
-  numF = parse_int(fp);
-  numU = parse_int(fp); numI = parse_int(fp); lines = parse_int(fp);
+  numF = parse_uint(fp);
+  numU = parse_uint(fp); numI = parse_uint(fp); lines = parse_uint(fp);
 
   A = new_matrix(numU, numI);
-  while (lines--) {
-    i = parse_int(fp);
-    j = parse_int(fp);
+  do {
+    i = parse_uint(fp);
+    j = parse_uint(fp);
     A[i][j] = parse_double(fp);
-  }
+  } while(--lines);
 
   if (fclose(fp) != 0) {
     fprintf(stderr, "Unable to flush file stream.\n");
@@ -192,13 +197,14 @@ int main(int argc, char **argv) {
   random_fill_LR(numU, numI, numF);
   matrix_mult_LR(numU, numI, numF);
   matrix_fact_B(numU, numI, numF, N, alpha);
+  print_matrix(B, numU, numI);
   recommend(numU, numI);
 
-  del_matrix(B, numU);
-  del_matrix(Rt, numF); 
-  del_matrix(R, numF);
-  del_matrix(Lt, numU);
-  del_matrix(L, numU);
-  del_matrix(A, numU);
+  delete_matrix(B, numU);
+  delete_matrix(Rt, numF); 
+  delete_matrix(R, numF);
+  delete_matrix(Lt, numU);
+  delete_matrix(L, numU);
+  delete_matrix(A, numU);
   return 0;
 }

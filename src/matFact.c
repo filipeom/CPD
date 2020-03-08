@@ -197,7 +197,6 @@ int main(int argc, char **argv) {
   random_fill_LR(numU, numI, numF);
   matrix_mult_LR(numU, numI, numF);
   matrix_fact_B(numU, numI, numF, N, alpha);
-  print_matrix(B, numU, numI);
   recommend(numU, numI);
 
   delete_matrix(B, numU);

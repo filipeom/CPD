@@ -6,11 +6,11 @@ TARGET=bin/matFac
 SRCEXT=c
 SOURCES=$(shell find $(SRCDIR) -type f -name *.$(SRCEXT))
 OBJECTS=$(patsubst $(SRCDIR)/%,$(BUILDDIR)/%,$(SOURCES:.$(SRCEXT)=.o))
-CFLAGS=-g -Wall -fopenmp
+CFLAGS=-g -Wall -std=gnu11
 
 
 $(TARGET): $(OBJECTS)
-	@echo "Linking..."
+	@echo "Linking...";
 	@echo "$(CC) $^ -o $(TARGET)"; $(CC) $^ -o $(TARGET)
 
 $(BUILDDIR)/%.o: $(SRCDIR)/%.$(SRCEXT)

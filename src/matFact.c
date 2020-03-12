@@ -137,7 +137,7 @@ matrix_fact_B(uint32_t n, double a, uint32_t nU, uint32_t nI,
       for (k = 0; k < nF; k++) {
         sum = 0;
         for (j = 0; j < nI; j++) {
-          if (A[i][j]) sum += 2*(A[i][j] - B[i][j])*(-Rt[k][j]);
+          if (A[i][j]) sum += 2 * (A[i][j] - B[i][j]) * (-Rt[k][j]);
         }
         L[i][k] = Lt[i][k] - (a * sum);
       }
@@ -147,7 +147,7 @@ matrix_fact_B(uint32_t n, double a, uint32_t nU, uint32_t nI,
       for (j = 0; j < nI; j++) {
         sum = 0;
         for (i = 0; i < nU; i++) {
-          if (A[i][j]) sum += 2*(A[i][j] - B[i][j])*(-Lt[i][k]);
+          if (A[i][j]) sum += 2 * (A[i][j] - B[i][j]) * (-Lt[i][k]);
         }
         R[k][j] = Rt[k][j] - (a * sum);
       }

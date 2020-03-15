@@ -18,7 +18,8 @@ static char *argv0;
 
 /* general helpers */
 void
-die(const char *err_str, ...) {
+die(const char *err_str, ...)
+{
   va_list ap;
 
   va_start(ap, err_str);
@@ -28,13 +29,15 @@ die(const char *err_str, ...) {
 }
 
 void
-usage(void) {
+usage(void)
+{
   die("usage: %s INSTANCE\n", argv0);
 }
 
 /* parsing helpers */
 uint32_t
-parse_uint(FILE *fp) {
+parse_uint(FILE *fp)
+{
   uint32_t value;
 
   if (1 != fscanf(fp, "%u", &value))
@@ -43,7 +46,8 @@ parse_uint(FILE *fp) {
 }
 
 double 
-parse_double(FILE *fp) {
+parse_double(FILE *fp)
+{
   double value;
 
   if (1 != fscanf(fp, "%lf", &value))
@@ -53,7 +57,8 @@ parse_double(FILE *fp) {
 
 /* matrix helpers */
 double** 
-new_matrix(uint32_t l, uint32_t c) {
+new_matrix(uint32_t l, uint32_t c)
+{
   size_t i, j;
 
   double **m = (double **) malloc(sizeof(double *) * l);
@@ -71,7 +76,8 @@ new_matrix(uint32_t l, uint32_t c) {
 }
 
 void 
-delete_matrix(double **m, uint32_t l) {
+delete_matrix(double **m, uint32_t l)
+{
   size_t i;
 
   for (i = 0; i < l; i++)
@@ -80,7 +86,8 @@ delete_matrix(double **m, uint32_t l) {
 }
 
 void 
-print_matrix(double **m, uint32_t l, uint32_t c) {
+print_matrix(double **m, uint32_t l, uint32_t c)
+{
   size_t i, j;
 
   for (i = 0; i < l; i++) {
@@ -93,7 +100,8 @@ print_matrix(double **m, uint32_t l, uint32_t c) {
 
 /* matrix operations */
 void
-random_fill_LR(uint32_t nU, uint32_t nI, uint32_t nF) {
+random_fill_LR(uint32_t nU, uint32_t nI, uint32_t nF)
+{
   size_t i, j;
 
   srandom(0);
@@ -108,7 +116,8 @@ random_fill_LR(uint32_t nU, uint32_t nI, uint32_t nF) {
 }
 
 void
-matrix_mult_LR(uint32_t nU, uint32_t nI, uint32_t nF) {
+matrix_mult_LR(uint32_t nU, uint32_t nI, uint32_t nF)
+{
   double sum;
   size_t i, j, k;
 
@@ -125,7 +134,8 @@ matrix_mult_LR(uint32_t nU, uint32_t nI, uint32_t nF) {
 
 void
 matrix_fact_B(uint32_t n, double a, uint32_t nU, uint32_t nI,
-    uint32_t nF) {
+    uint32_t nF)
+{
   size_t i, j, k;
   double **tmp, sum;
 
@@ -158,7 +168,8 @@ matrix_fact_B(uint32_t n, double a, uint32_t nU, uint32_t nI,
 }
 
 void
-recommend(uint32_t l, uint32_t c) {
+recommend(uint32_t l, uint32_t c)
+{
   double max;
   size_t i, j, item;
 
@@ -177,7 +188,8 @@ recommend(uint32_t l, uint32_t c) {
 
 /* main */
 int
-main(int argc, char **argv) {
+main(int argc, char **argv)
+{
   FILE *fp;
   double alpha;
   size_t i, j;

@@ -1,7 +1,6 @@
 #include <stdio.h>
-#include <stdarg.h>
 #include <stdlib.h>
-#include <stdint.h>
+#include <stdarg.h>
 #include <string.h>
 
 #define RAND01 ((double)random() / (double)RAND_MAX)
@@ -139,7 +138,7 @@ matrix_fact_B(unsigned int n, double a, unsigned int nU, unsigned int nI,
       for (k = 0; k < nF; ++k) {
         sum = 0;
         for (j = 0; j < nI; ++j) {
-          if (A[i*nI + j]) sum += 2 * (A[i*nI + j] - B[i*nI + j]) * (-Rt[j*nF + k]);
+          if (A[i*nI + j]) {sum += 2 * (A[i*nI + j] - B[i*nI + j]) * (-Rt[j*nF + k]);}
         }
         L[i*nF + k] = Lt[i*nF + k] - (a * sum);
       }
@@ -149,7 +148,7 @@ matrix_fact_B(unsigned int n, double a, unsigned int nU, unsigned int nI,
       for (k = 0; k < nF; ++k) {
         sum = 0;
         for (i = 0; i < nU; ++i) {
-          if (A[i*nI + j]) sum += 2 * (A[i*nI + j] - B[i*nI + j]) * (-Lt[i*nF + k]);
+          if (A[i*nI + j]) {sum += 2 * (A[i*nI + j] - B[i*nI + j]) * (-Lt[i*nF + k]);}
         }
         R[j*nF + k] = Rt[j*nF + k] - (a * sum);
       }

@@ -115,8 +115,9 @@ matrix_mult(unsigned int nU, unsigned int nI, unsigned int nF)
   for (i = 0; i < nU; ++i) {
     for (j = 0; j < nI; ++j) {
       sum = 0;
-      for (k = 0; k < nF; ++k) {
-        sum += L[i*nF + k] * R[j*nF + k];
+      for (k = 0; k < nF; k += 2) {
+        sum += L[i*nF + k+0] * R[j*nF + k+0];
+        sum += L[i*nF + k+1] * R[j*nF + k+1];
       }
       B[i*nI + j] = sum;
     }
@@ -157,8 +158,9 @@ matrix_fact_B(unsigned int n, double a, unsigned int nU, unsigned int nI,
     for (i = 0; i < nU; ++i) {
       for (j = 0; j < nI; ++j) {
         sum = 0;
-        for (k = 0; k < nF; ++k) {
-          sum += L[i*nF + k] * R[j*nF + k];
+        for (k = 0; k < nF; k += 2) {
+          sum += L[i*nF + k+0] * R[j*nF + k+0];
+          sum += L[i*nF + k+1] * R[j*nF + k+1];
         }
         B[i*nI + j] = sum;
       }

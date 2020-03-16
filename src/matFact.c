@@ -170,7 +170,8 @@ void
 recommend(unsigned int l, unsigned int c)
 {
   double max;
-  size_t i, j, item;
+  size_t item;
+  size_t i, j;
 
   for (i = 0; i < l; ++i) {
     item = 0; max = -1.0;
@@ -189,10 +190,7 @@ int
 main(int argc, char **argv)
 {
   FILE *fp;
-  double alpha;
   size_t i, j;
-  unsigned int N, lines;
-  unsigned int numU, numI, numF;
 
   argv0 = argv[0];
   if (argc != 2)
@@ -201,12 +199,12 @@ main(int argc, char **argv)
   if (NULL == (fp = fopen(argv[1], "r")))
     die("unable to open file: \'%s\'\n", argv[1]);
 
-  N = parse_uint(fp);
-  alpha = parse_double(fp);
-  numF = parse_uint(fp);
-  numU = parse_uint(fp);
-  numI = parse_uint(fp);
-  lines = parse_uint(fp);
+  unsigned int N = parse_uint(fp);
+  double alpha = parse_double(fp);
+  unsigned int numF = parse_uint(fp);
+  unsigned int numU = parse_uint(fp);
+  unsigned int numI = parse_uint(fp);
+  unsigned int lines = parse_uint(fp);
 
   A = new_matrix(numU, numI);
   do {

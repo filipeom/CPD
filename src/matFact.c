@@ -112,11 +112,11 @@ random_fill_LR(uint32_t nU, uint32_t nI, uint32_t nF)
 
   for (i = 0; i < nF; i++)
     for (j = 0; j < nI; j++)
-      R[i][j] = RAND01 / (double) nF;
+      R[j][i] = RAND01 / (double) nF;
 }
 
 void
-matrix_mult_LR(uint32_t nU, uint32_t nI, uint32_t nF)
+matrix_mult(uint32_t nU, uint32_t nI, uint32_t nF)
 {
   double sum;
   size_t i, j, k;
@@ -125,7 +125,7 @@ matrix_mult_LR(uint32_t nU, uint32_t nI, uint32_t nF)
     for (j = 0; j < nI; j++) {
       sum = 0;
       for (k = 0; k < nF; k++) {
-        sum += L[i][k] * R[k][j];
+        sum += L[i][k] * R[j][k];
       }
       B[i][j] = sum;
     }
@@ -147,23 +147,23 @@ matrix_fact_B(uint32_t n, double a, uint32_t nU, uint32_t nI,
       for (k = 0; k < nF; k++) {
         sum = 0;
         for (j = 0; j < nI; j++) {
-          if (A[i][j]) sum += 2 * (A[i][j] - B[i][j]) * (-Rt[k][j]);
+          if (A[i][j]) sum += 2 * (A[i][j] - B[i][j]) * (-Rt[j][k]);
         }
         L[i][k] = Lt[i][k] - (a * sum);
       }
     }
 
-    for (k = 0; k < nF; k++) {
-      for (j = 0; j < nI; j++) {
+    for (j = 0; j < nI; j++) {
+      for (k = 0; k < nF; k++) {
         sum = 0;
         for (i = 0; i < nU; i++) {
           if (A[i][j]) sum += 2 * (A[i][j] - B[i][j]) * (-Lt[i][k]);
         }
-        R[k][j] = Rt[k][j] - (a * sum);
+        R[j][k] = Rt[j][k] - (a * sum);
       }
     }
 
-    matrix_mult_LR(nU, nI, nF);
+    matrix_mult(nU, nI, nF);
   } while(--n);
 }
 
@@ -222,18 +222,18 @@ main(int argc, char **argv)
 
   L  = new_matrix(numU, numF);
   Lt = new_matrix(numU, numF);
-  R  = new_matrix(numF, numI);
-  Rt = new_matrix(numF, numI);
+  R  = new_matrix(numI, numF);
+  Rt = new_matrix(numI, numF);
   B  = new_matrix(numU, numI);
 
   random_fill_LR(numU, numI, numF);
-  matrix_mult_LR(numU, numI, numF);
+  matrix_mult(numU, numI, numF);
   matrix_fact_B(N, alpha, numU, numI, numF);
   recommend(numU, numI);
 
   delete_matrix(B, numU);
-  delete_matrix(Rt, numF); 
-  delete_matrix(R, numF);
+  delete_matrix(Rt, numI); 
+  delete_matrix(R, numI);
   delete_matrix(Lt, numU);
   delete_matrix(L, numU);
   delete_matrix(A, numU);

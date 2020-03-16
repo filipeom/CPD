@@ -6,7 +6,7 @@ TARGET=bin/matFac
 SRCEXT=c
 SOURCES=$(shell find $(SRCDIR) -type f -name *.$(SRCEXT))
 OBJECTS=$(patsubst $(SRCDIR)/%,$(BUILDDIR)/%,$(SOURCES:.$(SRCEXT)=.o))
-CFLAGS=-g -Wall -std=gnu11
+CFLAGS=-g -Wall -std=gnu11 -O0
 
 
 $(TARGET): $(OBJECTS)

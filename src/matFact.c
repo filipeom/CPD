@@ -7,12 +7,12 @@
 #define RAND01 ((double)random() / (double)RAND_MAX)
 
 /* globals */
-static double **A  = NULL;
-static double **B  = NULL;
-static double **Lt = NULL;
-static double **L  = NULL;
-static double **Rt = NULL;
-static double **R  = NULL;
+static double *A  = NULL;
+static double *B  = NULL;
+static double *Lt = NULL;
+static double *L  = NULL;
+static double *Rt = NULL;
+static double *R  = NULL;
 
 static char *argv0;
 
@@ -35,10 +35,10 @@ usage(void)
 }
 
 /* parsing helpers */
-uint32_t
+unsigned int
 parse_uint(FILE *fp)
 {
-  uint32_t value;
+  unsigned int value;
 
   if (1 != fscanf(fp, "%u", &value))
     die("unable to parse integer.\n");
@@ -56,43 +56,35 @@ parse_double(FILE *fp)
 }
 
 /* matrix helpers */
-double** 
-new_matrix(uint32_t l, uint32_t c)
+double*
+new_matrix(unsigned int l, unsigned int c)
 {
-  size_t i, j;
-
-  double **m = (double **) malloc(sizeof(double *) * l);
+  double *m = (double *) malloc(sizeof(double) * l * c);
   if (NULL == m)
     die("unable to allocate memory for matrix.\n");
-
-  for (i = 0; i < l; i++) {
-    m[i] = (double *) malloc(sizeof(double) * c);
-    for (j = 0; j < c; j++) {
-      m[i][j] = '\x00';
-    }
-  }
+  
+  memset(m, '\x00', sizeof(double)*l*c);
 
   return m;
 }
 
 void 
-delete_matrix(double **m, uint32_t l)
+delete_matrix(double *m)
 {
-  size_t i;
-
-  for (i = 0; i < l; i++)
-    free(m[i]);
-  free(m);
+  if (NULL != m) {
+    free(m);
+    m = NULL;
+  }
 }
 
 void 
-print_matrix(double **m, uint32_t l, uint32_t c)
+print_matrix(const double *m, unsigned int l, unsigned int c)
 {
   size_t i, j;
 
-  for (i = 0; i < l; i++) {
-    for (j= 0; j < c; j++) {
-      printf("%1.6lf ", m[i][j]);
+  for (i = 0; i < l; ++i) {
+    for (j= 0; j < c; ++j) {
+      printf("%1.6lf ", m[i*c + j]);
     }
     printf("\n");
   }
@@ -100,85 +92,92 @@ print_matrix(double **m, uint32_t l, uint32_t c)
 
 /* matrix operations */
 void
-random_fill_LR(uint32_t nU, uint32_t nI, uint32_t nF)
+random_fill_LR(unsigned int nU, unsigned int nI, unsigned int nF)
 {
   size_t i, j;
 
   srandom(0);
 
-  for (i = 0; i < nU; i++)
-    for (j = 0; j < nF; j++)
-      L[i][j] = RAND01 / (double) nF;
+  for (i = 0; i < nU; ++i)
+    for (j = 0; j < nF; ++j)
+      L[i*nF + j] = RAND01 / (double) nF;
 
-  for (i = 0; i < nF; i++)
-    for (j = 0; j < nI; j++)
-      R[j][i] = RAND01 / (double) nF;
+  for (i = 0; i < nF; ++i)
+    for (j = 0; j < nI; ++j)
+      R[j*nF + i] = RAND01 / (double) nF;
 }
 
 void
-matrix_mult(uint32_t nU, uint32_t nI, uint32_t nF)
+matrix_mult(unsigned int nU, unsigned int nI, unsigned int nF)
 {
   double sum;
   size_t i, j, k;
 
-  for (i = 0; i < nU; i++) {
-    for (j = 0; j < nI; j++) {
+  for (i = 0; i < nU; ++i) {
+    for (j = 0; j < nI; ++j) {
       sum = 0;
-      for (k = 0; k < nF; k++) {
-        sum += L[i][k] * R[j][k];
+      for (k = 0; k < nF; ++k) {
+        sum += L[i*nF + k] * R[j*nF + k];
       }
-      B[i][j] = sum;
+      B[i*nI + j] = sum;
     }
   }
 }
 
 void
-matrix_fact_B(uint32_t n, double a, uint32_t nU, uint32_t nI,
-    uint32_t nF)
+matrix_fact_B(unsigned int n, double a, unsigned int nU, unsigned int nI,
+    unsigned int nF)
 {
   size_t i, j, k;
-  double **tmp, sum;
+  double *tmp, sum;
 
   do {
     tmp = L; L = Lt; Lt = tmp;
     tmp = R; R = Rt; Rt = tmp;
 
-    for (i = 0; i < nU; i++) {
-      for (k = 0; k < nF; k++) {
+    for (i = 0; i < nU; ++i) {
+      for (k = 0; k < nF; ++k) {
         sum = 0;
-        for (j = 0; j < nI; j++) {
-          if (A[i][j]) sum += 2 * (A[i][j] - B[i][j]) * (-Rt[j][k]);
+        for (j = 0; j < nI; ++j) {
+          if (A[i*nI + j]) sum += 2 * (A[i*nI + j] - B[i*nI + j]) * (-Rt[j*nF + k]);
         }
-        L[i][k] = Lt[i][k] - (a * sum);
+        L[i*nF + k] = Lt[i*nF + k] - (a * sum);
       }
     }
 
-    for (j = 0; j < nI; j++) {
-      for (k = 0; k < nF; k++) {
+    for (j = 0; j < nI; ++j) {
+      for (k = 0; k < nF; ++k) {
         sum = 0;
-        for (i = 0; i < nU; i++) {
-          if (A[i][j]) sum += 2 * (A[i][j] - B[i][j]) * (-Lt[i][k]);
+        for (i = 0; i < nU; ++i) {
+          if (A[i*nI + j]) sum += 2 * (A[i*nI + j] - B[i*nI + j]) * (-Lt[i*nF + k]);
         }
-        R[j][k] = Rt[j][k] - (a * sum);
+        R[j*nF + k] = Rt[j*nF + k] - (a * sum);
       }
     }
 
-    matrix_mult(nU, nI, nF);
+    for (i = 0; i < nU; ++i) {
+      for (j = 0; j < nI; ++j) {
+        sum = 0;
+        for (k = 0; k < nF; ++k) {
+          sum += L[i*nF + k] * R[j*nF + k];
+        }
+        B[i*nI + j] = sum;
+      }
+    }
   } while(--n);
 }
 
 void
-recommend(uint32_t l, uint32_t c)
+recommend(unsigned int l, unsigned int c)
 {
   double max;
   size_t i, j, item;
 
-  for (i = 0; i < l; i++) {
-    item = 0;
-    max = -1.00;
-    for (j = 0; j < c; j++) {
-      if ((B[i][j] > max) && !A[i][j]) {
-        max = B[i][j];
+  for (i = 0; i < l; ++i) {
+    item = 0; max = -1.0;
+    for (j = 0; j < c; ++j) {
+      if ((B[i*c + j] > max) && !A[i*c + j]) {
+        max = B[i*c + j];
         item = j;
       }
     }
@@ -193,8 +192,8 @@ main(int argc, char **argv)
   FILE *fp;
   double alpha;
   size_t i, j;
-  uint32_t N, lines;
-  uint32_t numU, numI, numF;
+  unsigned int N, lines;
+  unsigned int numU, numI, numF;
 
   argv0 = argv[0];
   if (argc != 2)
@@ -211,11 +210,11 @@ main(int argc, char **argv)
   lines = parse_uint(fp);
 
   A = new_matrix(numU, numI);
-  while(lines--) {
+  do {
     i = parse_uint(fp);
     j = parse_uint(fp);
-    A[i][j] = parse_double(fp);
-  }
+    A[i*numI + j] = parse_double(fp);
+  } while(--lines);
 
   if (0 != fclose(fp))
     die("unable to flush file stream.\n");
@@ -231,11 +230,11 @@ main(int argc, char **argv)
   matrix_fact_B(N, alpha, numU, numI, numF);
   recommend(numU, numI);
 
-  delete_matrix(B, numU);
-  delete_matrix(Rt, numI); 
-  delete_matrix(R, numI);
-  delete_matrix(Lt, numU);
-  delete_matrix(L, numU);
-  delete_matrix(A, numU);
+  delete_matrix(B);
+  delete_matrix(Rt); 
+  delete_matrix(R);
+  delete_matrix(Lt);
+  delete_matrix(L);
+  delete_matrix(A);
   return 0;
 }

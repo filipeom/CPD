@@ -1,7 +1,7 @@
 CC=gcc
 SRCDIR=src
 BUILDDIR=build
-TARGET=bin/matFac
+TARGET=bin/matFact
 
 SRCEXT=c
 SOURCES=$(shell find $(SRCDIR) -type f -name *.$(SRCEXT))

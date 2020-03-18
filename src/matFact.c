@@ -5,15 +5,21 @@
 
 #define RAND01 ((double)random() / (double)RAND_MAX)
 
+struct csr {
+  unsigned int *row;
+  unsigned int *col;
+  double *val;
+};
+
 /* globals */
-static double *A  = NULL;
+static char *argv0 = NULL;
+static struct csr *A = NULL;
+
 static double *B  = NULL;
 static double *Lt = NULL;
 static double *L  = NULL;
 static double *Rt = NULL;
 static double *R  = NULL;
-
-static char *argv0;
 
 /* general helpers */
 void
@@ -44,7 +50,7 @@ parse_uint(FILE *fp)
   return value;
 }
 
-double 
+double
 parse_double(FILE *fp)
 {
   double value;
@@ -59,24 +65,22 @@ double*
 new_matrix(unsigned int l, unsigned int c)
 {
   double *m = (double *) malloc(sizeof(double) * l * c);
-  if (NULL == m)
+  if (!m)
     die("unable to allocate memory for matrix.\n");
-  
+
   memset(m, '\x00', sizeof(double)*l*c);
 
   return m;
 }
 
-void 
+void
 delete_matrix(double *m)
 {
-  if (NULL != m) {
+  if (m)
     free(m);
-    m = NULL;
-  }
 }
 
-void 
+void
 print_matrix(const double *m, unsigned int l, unsigned int c)
 {
   size_t i, j;
@@ -86,6 +90,36 @@ print_matrix(const double *m, unsigned int l, unsigned int c)
       printf("%1.6lf ", m[i*c + j]);
     }
     printf("\n");
+  }
+}
+
+struct csr*
+new_csr_matrix(unsigned int num_nz)
+{
+  struct csr *m;
+
+  m = (struct csr *) malloc(sizeof(struct csr));
+  if (!m)
+    die("unable to allocate memory for sparse matrix.\n");
+
+  m->row = (unsigned int *) malloc(sizeof(unsigned int) * num_nz);
+  m->col = (unsigned int *) malloc(sizeof(unsigned int) * num_nz);
+  m->val = (double *) malloc(sizeof(double) * num_nz);
+
+  if (!m->row || !m->col || !m->val)
+    die("unable to allocate memory for sparse matrix.\n");
+
+  return m;
+}
+
+void
+delete_csr_matrix(struct csr *m)
+{
+  if (m->row && m->row && m->row && m) {
+    free(m->row);
+    free(m->col);
+    free(m->val);
+    free(m);
   }
 }
 
@@ -107,7 +141,7 @@ random_fill_LR(unsigned int nU, unsigned int nI, unsigned int nF)
 }
 
 void
-matrix_mult(unsigned int nU, unsigned int nI, unsigned int nF)
+matrix_mult_LR(unsigned int nU, unsigned int nI, unsigned int nF)
 {
   double sum;
   size_t i, j, k;
@@ -125,33 +159,23 @@ matrix_mult(unsigned int nU, unsigned int nI, unsigned int nF)
 }
 
 void
-matrix_fact_B(unsigned int n, double a, unsigned int nU, unsigned int nI,
-    unsigned int nF)
+matrix_fact_B(unsigned int n, double alpha, unsigned int nnz,
+    unsigned int nU, unsigned int nI, unsigned int nF)
 {
-  size_t i, j, k;
-  double *tmp, sum;
+  size_t i, j, ij, k;
+  double sum, diff;
 
   do {
-    tmp = L; L = Lt; Lt = tmp;
-    tmp = R; R = Rt; Rt = tmp;
+    memcpy(Rt, R, sizeof(double) * nI*nF);
+    memcpy(Lt, L, sizeof(double) * nU*nF);
 
-    for (i = 0; i < nU; ++i) {
+    for (ij = 0; ij < nnz; ++ij) {
+      i = A->row[ij];
+      j = A->col[ij];
+      diff = A->val[ij] - B[i*nI + j];
       for (k = 0; k < nF; ++k) {
-        sum = 0;
-        for (j = 0; j < nI; ++j) {
-          if (A[i*nI + j]) {sum += 2 * (A[i*nI + j] - B[i*nI + j]) * (-Rt[j*nF + k]);}
-        }
-        L[i*nF + k] = Lt[i*nF + k] - (a * sum);
-      }
-    }
-
-    for (j = 0; j < nI; ++j) {
-      for (k = 0; k < nF; ++k) {
-        sum = 0;
-        for (i = 0; i < nU; ++i) {
-          if (A[i*nI + j]) {sum += 2 * (A[i*nI + j] - B[i*nI + j]) * (-Lt[i*nF + k]);}
-        }
-        R[j*nF + k] = Rt[j*nF + k] - (a * sum);
+        L[i*nF + k] = L[i*nF + k] + (alpha * 2 * diff * Rt[j*nF + k]);
+        R[j*nF + k] = R[j*nF + k] + (alpha * 2 * diff * Lt[i*nF + k]);
       }
     }
 
@@ -169,16 +193,19 @@ matrix_fact_B(unsigned int n, double a, unsigned int nU, unsigned int nI,
 }
 
 void
-recommend(unsigned int l, unsigned int c)
+recommend(unsigned int nnz, unsigned int l, unsigned int c)
 {
   double max;
   size_t item;
   size_t i, j;
 
+  for (i = 0; i < nnz; i++)
+    B[A->row[i]*c + A->col[i]] = 0;
+
   for (i = 0; i < l; ++i) {
     item = 0; max = -1.0;
     for (j = 0; j < c; ++j) {
-      if ((B[i*c + j] > max) && !A[i*c + j]) {
+      if (B[i*c + j] > max) {
         max = B[i*c + j];
         item = j;
       }
@@ -192,7 +219,6 @@ int
 main(int argc, char **argv)
 {
   FILE *fp;
-  size_t i, j;
 
   argv0 = argv[0];
   if (argc != 2)
@@ -206,14 +232,14 @@ main(int argc, char **argv)
   unsigned int numF = parse_uint(fp);
   unsigned int numU = parse_uint(fp);
   unsigned int numI = parse_uint(fp);
-  unsigned int lines = parse_uint(fp);
+  unsigned int nnz  = parse_uint(fp);
 
-  A = new_matrix(numU, numI);
-  do {
-    i = parse_uint(fp);
-    j = parse_uint(fp);
-    A[i*numI + j] = parse_double(fp);
-  } while(--lines);
+  A = new_csr_matrix(nnz);
+  for (size_t ix = 0; ix < nnz; ++ix) {
+    A->row[ix] = parse_uint(fp);
+    A->col[ix] = parse_uint(fp);
+    A->val[ix] = parse_double(fp);
+  }
 
   if (0 != fclose(fp))
     die("unable to flush file stream.\n");
@@ -225,15 +251,16 @@ main(int argc, char **argv)
   B  = new_matrix(numU, numI);
 
   random_fill_LR(numU, numI, numF);
-  matrix_mult(numU, numI, numF);
-  matrix_fact_B(N, alpha, numU, numI, numF);
-  recommend(numU, numI);
+  matrix_mult_LR(numU, numI, numF);
+  matrix_fact_B(N, alpha, nnz, numU, numI, numF);
+  recommend(nnz, numU, numI);
 
   delete_matrix(B);
-  delete_matrix(Rt); 
+  delete_matrix(Rt);
   delete_matrix(R);
   delete_matrix(Lt);
   delete_matrix(L);
-  delete_matrix(A);
+
+  delete_csr_matrix(A);
   return 0;
 }

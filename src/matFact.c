@@ -9,7 +9,7 @@ struct csr {
   unsigned int *row;
   unsigned int *col;
   double *val;
-};
+} __attribute((aligned(64)));
 
 /* globals */
 static char *argv0 = NULL;
@@ -143,17 +143,20 @@ random_fill_LR(unsigned int nU, unsigned int nI, unsigned int nF)
 void
 matrix_mult_LR(unsigned int nU, unsigned int nI, unsigned int nF)
 {
-  double sum;
   size_t i, j, k;
+  double tmp; 
+  double *restrict m1;
+  double *restrict m2;
+  double *restrict mres;
 
-  for (i = 0; i < nU; ++i) {
-    for (j = 0; j < nI; ++j) {
-      sum = 0;
-      for (k = 0; k < nF; k += 2) {
-        sum += L[i*nF + k+0] * R[j*nF + k+0];
-        sum += L[i*nF + k+1] * R[j*nF + k+1];
+  for (i = 0, mres = &B[i*nI], m1 = &L[i*nF]; i < nU;
+      ++i, mres += nI, m1 += nF) {
+    for (j = 0, m2 = &R[j*nF]; j < nI; ++j, m2 += nF) {
+      tmp = 0;
+      for (k = 0; k < nF; ++k) {
+        tmp += m1[k] * m2[k];
       }
-      B[i*nI + j] = sum;
+      mres[j] = tmp;
     }
   }
 }
@@ -163,30 +166,34 @@ matrix_fact_B(unsigned int n, double alpha, unsigned int nnz,
     unsigned int nU, unsigned int nI, unsigned int nF)
 {
   size_t i, j, ij, k;
-  double sum, diff;
+  double tmp;
+  double *restrict m1;
+  double *restrict m2;
+  double *restrict mres; 
 
   do {
     memcpy(Rt, R, sizeof(double) * nI*nF);
     memcpy(Lt, L, sizeof(double) * nU*nF);
 
     for (ij = 0; ij < nnz; ++ij) {
-      i = A->row[ij];
-      j = A->col[ij];
-      diff = A->val[ij] - B[i*nI + j];
+      i = A->row[ij]; j = A->col[ij];
+      m1 = &L[i*nF];
+      m2 = &R[j*nF];
+      tmp = A->val[ij] - B[i*nI + j];
       for (k = 0; k < nF; ++k) {
-        L[i*nF + k] = L[i*nF + k] + (alpha * 2 * diff * Rt[j*nF + k]);
-        R[j*nF + k] = R[j*nF + k] + (alpha * 2 * diff * Lt[i*nF + k]);
+        m1[k] += alpha * 2 * tmp * Rt[j*nF + k];
+        m2[k] += alpha * 2 * tmp * Lt[i*nF + k];
       }
     }
 
-    for (i = 0; i < nU; ++i) {
-      for (j = 0; j < nI; ++j) {
-        sum = 0;
-        for (k = 0; k < nF; k += 2) {
-          sum += L[i*nF + k+0] * R[j*nF + k+0];
-          sum += L[i*nF + k+1] * R[j*nF + k+1];
+    for (i = 0, mres = &B[i*nI], m1 = &L[i*nF]; i < nU;
+        ++i, mres += nI, m1 += nF) {
+      for (j = 0, m2 = &R[j*nF]; j < nI; ++j, m2 += nF) {
+        tmp = 0;
+        for (k = 0; k < nF; ++k) {
+          tmp += m1[k] * m2[k];
         }
-        B[i*nI + j] = sum;
+        mres[j] = tmp;
       }
     }
   } while(--n);
@@ -195,9 +202,12 @@ matrix_fact_B(unsigned int n, double alpha, unsigned int nnz,
 void
 recommend(unsigned int nnz, unsigned int l, unsigned int c)
 {
-  double max;
-  size_t item;
   size_t i, j;
+  size_t item;
+  double max;
+
+  for (i = 0; i < nnz; i++)
+    B[A->row[i]*c + A->col[i]] = 0;
 
   for (i = 0; i < nnz; i++)
     B[A->row[i]*c + A->col[i]] = 0;

@@ -209,6 +209,9 @@ recommend(unsigned int nnz, unsigned int l, unsigned int c)
   for (i = 0; i < nnz; i++)
     B[A->row[i]*c + A->col[i]] = 0;
 
+  for (i = 0; i < nnz; i++)
+    B[A->row[i]*c + A->col[i]] = 0;
+
   for (i = 0; i < l; ++i) {
     item = 0; max = -1.0;
     for (j = 0; j < c; ++j) {

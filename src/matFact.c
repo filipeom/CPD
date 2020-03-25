@@ -181,24 +181,18 @@ run(uint n, double alpha, uint nnz, uint nU, uint nI, uint nF)
       i = A->row[ij]; j = A->col[ij];
       m1 = &L[i*nF];
       m2 = &R[j*nF];
-      tmp = A->val[ij] - B[i*nI + j];
+      max = 0;
+      for (k = 0; k < nF; ++k) {
+        max += Lt[i*nF+k] * Rt[j*nF + k];
+      }
+      tmp = A->val[ij] - max;
       for (k = 0; k < nF; ++k) {
         m1[k] += alpha * 2 * tmp * Rt[j*nF + k];
         m2[k] += alpha * 2 * tmp * Lt[i*nF + k];
       }
     }
-
-    for (i = 0, mres = &B[i*nI], m1 = &L[i*nF]; i < nU;
-        ++i, mres += nI, m1 += nF) {
-      for (j = 0, m2 = &R[j*nF]; j < nI; ++j, m2 += nF) {
-        tmp = 0;
-        for (k = 0; k < nF; ++k) {
-          tmp += m1[k] * m2[k];
-        }
-        mres[j] = tmp;
-      }
-    }
   }
+  matrix_mult_LR(nU, nI, nF);
 
   for (i = 0; i < nnz; ++i)
     B[A->row[i]*nI + A->col[i]] = 0;

@@ -64,11 +64,11 @@ parse_double(FILE *fp)
 
 /* matrix helpers */
 double*
-new_matrix(uint l, uint c)
+new_matrix(const char *mn, uint l, uint c)
 {
   double *m = (double *) malloc(sizeof(double) * l * c);
-  if (!m)
-    die("unable to allocate memory for matrix.\n");
+  if (NULL == m)
+    die("unable to allocate memory for matrix \'%s\'.\n", mn);
 
   memset(m, '\x00', sizeof(double)*l*c);
 
@@ -78,7 +78,7 @@ new_matrix(uint l, uint c)
 void
 delete_matrix(double *m)
 {
-  if (m)
+  if (NULL != m)
     free(m);
 }
 
@@ -96,20 +96,20 @@ print_matrix(const double *m, uint l, uint c)
 }
 
 struct csr*
-new_csr_matrix(uint num_nz)
+new_csr_matrix(const char *mn, uint num_nz)
 {
   struct csr *m;
 
   m = (struct csr *) malloc(sizeof(struct csr));
-  if (!m)
-    die("unable to allocate memory for sparse matrix.\n");
+  if (NULL == m)
+    die("unable to allocate memory for sparse matrix \'%s\'.\n", mn);
 
   m->row = (uint *) malloc(sizeof(uint) * num_nz);
   m->col = (uint *) malloc(sizeof(uint) * num_nz);
   m->val = (double *) malloc(sizeof(double) * num_nz);
 
-  if (!m->row || !m->col || !m->val)
-    die("unable to allocate memory for sparse matrix.\n");
+  if (NULL == m->row || NULL == m->col || NULL == m->val)
+    die("unable to allocate memory for sparse matrix \'%s\'.\n", mn);
 
   return m;
 }
@@ -168,10 +168,9 @@ run(uint n, double alpha, uint nnz, uint nU, uint nI, uint nF)
 {
   size_t i, j, k;
   size_t ij, item;
-  double tmp, max;
+  double tmp;
   double *restrict m1;
   double *restrict m2;
-  double *restrict mres;
 
   for (size_t it = n; it--; ) {
     memcpy(Rt, R, sizeof(double) * nI*nF);
@@ -181,26 +180,27 @@ run(uint n, double alpha, uint nnz, uint nU, uint nI, uint nF)
       i = A->row[ij]; j = A->col[ij];
       m1 = &L[i*nF];
       m2 = &R[j*nF];
-      max = 0;
+      tmp = 0;
       for (k = 0; k < nF; ++k) {
-        max += Lt[i*nF+k] * Rt[j*nF + k];
+        tmp += Lt[i*nF+k] * Rt[j*nF + k];
       }
-      tmp = A->val[ij] - max;
+      tmp = A->val[ij] - tmp;
       for (k = 0; k < nF; ++k) {
         m1[k] += alpha * 2 * tmp * Rt[j*nF + k];
         m2[k] += alpha * 2 * tmp * Lt[i*nF + k];
       }
     }
+
   }
   matrix_mult_LR(nU, nI, nF);
 
   for (i = 0; i < nnz; ++i)
     B[A->row[i]*nI + A->col[i]] = 0;
   for (i = 0; i < nU; ++i) {
-    item = 0; max = -1.0;
+    item = 0; tmp = -1.0;
     for (j = 0; j < nI; ++j) {
-      if (B[i*nI + j] > max) {
-        max = B[i*nI + j];
+      if (B[i*nI + j] > tmp) {
+        tmp = B[i*nI + j];
         item = j;
       }
     }
@@ -228,7 +228,7 @@ main(int argc, char **argv)
   uint nI  = parse_uint(fp);
   uint nnz = parse_uint(fp);
 
-  A = new_csr_matrix(nnz);
+  A = new_csr_matrix("A", nnz);
   for (size_t ix = 0; ix < nnz; ++ix) {
     A->row[ix] = parse_uint(fp);
     A->col[ix] = parse_uint(fp);
@@ -238,14 +238,13 @@ main(int argc, char **argv)
   if (0 != fclose(fp))
     die("unable to flush file stream.\n");
 
-  L  = new_matrix(nU, nF);
-  Lt = new_matrix(nU, nF);
-  R  = new_matrix(nI, nF);
-  Rt = new_matrix(nI, nF);
-  B  = new_matrix(nU, nI);
+  L  = new_matrix("L", nU, nF);
+  Lt = new_matrix("Lt", nU, nF);
+  R  = new_matrix("R", nI, nF);
+  Rt = new_matrix("Rt", nI, nF);
+  B  = new_matrix("B", nU, nI);
 
   random_fill_LR(nU, nI, nF);
-  matrix_mult_LR(nU, nI, nF);
 
   run(N, a, nnz, nU, nI, nF);
 

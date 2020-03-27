@@ -144,7 +144,7 @@ void
 run(uint n, double alpha, uint nU, uint nI, uint nF)
 {
   size_t i, j, k;
-  size_t ij, item;
+  size_t jx, item;
   double tmp;
   double *restrict m1;
   double *restrict m2;
@@ -156,16 +156,17 @@ run(uint n, double alpha, uint nU, uint nI, uint nF)
     memcpy(Lt, L, sizeof(double) * nU * nF);
 
     for (i = 0; i < nU; ++i) {
-      for (j = A->row[i]; j < A->row[i+1]; ++j) {
+      for (jx = A->row[i]; jx < A->row[i+1]; ++jx) {
+        j = A->col[jx];
         m1 = &L[i*nF];
-        m2 = &R[A->col[j]*nF];
+        m2 = &R[j*nF];
         tmp = 0;
         for (k = 0; k < nF; ++k) {
-          tmp += Lt[i*nF+k] * Rt[A->col[j]*nF + k];
+          tmp += Lt[i*nF+k] * Rt[j*nF + k];
         }
-        tmp = A->val[j] - tmp;
+        tmp = A->val[jx] - tmp;
         for (k = 0; k < nF; ++k) {
-          m1[k] += alpha * 2 * tmp * Rt[A->col[j]*nF + k];
+          m1[k] += alpha * 2 * tmp * Rt[j*nF + k];
           m2[k] += alpha * 2 * tmp * Lt[i*nF + k];
         }
       }
@@ -186,8 +187,8 @@ run(uint n, double alpha, uint nU, uint nI, uint nF)
 
   /* FIXME: output */
   for (i = 0; i < nU; ++i)
-    for (j = A->row[i]; j < A->row[i+1]; ++j)
-      B[i*nI + A->col[j]] = 0;
+    for (jx = A->row[i]; jx < A->row[i+1]; ++jx)
+      B[i*nI + A->col[jx]] = 0;
   for (i = 0; i < nU; ++i) {
     item = 0; tmp = -1.0;
     for (j = 0; j < nI; ++j) {
@@ -222,15 +223,13 @@ main(int argc, char *argv[])
   uint nnz = parse_uint(fp);
 
   csr_matrix_init(&A, nnz, nU);
-
-  A->row[0] = 0;
   for (ij = 0; ij < nnz; ++ij) {
     i = parse_uint(fp);
     A->row[i+1] += 1;
     A->col[ij] = parse_uint(fp);
     A->val[ij] = parse_double(fp);
   }
-  for (i = 1; i < (nU + 1); ++i)
+  for (i = 1; i <= nU; ++i)
     A->row[i] += A->row[i-1];
 
   if (0 != fclose(fp))

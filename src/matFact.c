@@ -87,7 +87,7 @@ print_matrix(const double *matrix, uint l, uint c)
 
   for (i = 0; i < l; ++i) {
     for (j= 0; j < c; ++j) {
-      printf("%1.6lf ", matrix[i*c + j]);
+      printf("%1.6lf ", matrix[i * c + j]);
     }
     printf("\n");
   }
@@ -133,11 +133,11 @@ random_fill_LR(uint nU, uint nI, uint nF)
 
   for (i = 0; i < nU; ++i)
     for (j = 0; j < nF; ++j)
-      L[i*nF + j] = RAND01 / (double) nF;
+      L[i * nF + j] = RAND01 / (double) nF;
 
   for (i = 0; i < nF; ++i)
     for (j = 0; j < nI; ++j)
-      R[j*nF + i] = RAND01 / (double) nF;
+      R[j * nF + i] = RAND01 / (double) nF;
 }
 
 void
@@ -146,9 +146,9 @@ run(uint n, double alpha, uint nU, uint nI, uint nF)
   size_t i, j, k;
   size_t jx, item;
   double tmp;
-  double *restrict m1;
-  double *restrict m2;
-  double *restrict mres;
+  double *restrict m1, *restrict mt1;
+  double *restrict m2, *restrict mt2;
+  double *restrict m;
 
   /* matrix factorization */
   for (size_t it = n; it--; ) {
@@ -156,44 +156,48 @@ run(uint n, double alpha, uint nU, uint nI, uint nF)
     memcpy(Lt, L, sizeof(double) * nU * nF);
 
     for (i = 0; i < nU; ++i) {
-      for (jx = A->row[i]; jx < A->row[i+1]; ++jx) {
-        j = A->col[jx];
-        m1 = &L[i*nF];
-        m2 = &R[j*nF];
+      for (jx = A->row[i], j = A->col[jx]; jx < A->row[i + 1];
+          ++jx, j = A->col[jx]) {
+        m1 = &L[i * nF]; mt1 = &Lt[i * nF];
+        m2 = &R[j * nF]; mt2 = &Rt[j * nF];
         tmp = 0;
         for (k = 0; k < nF; ++k) {
-          tmp += Lt[i*nF+k] * Rt[j*nF + k];
+          tmp += mt1[k] * mt2[k];
         }
         tmp = A->val[jx] - tmp;
         for (k = 0; k < nF; ++k) {
-          m1[k] += alpha * 2 * tmp * Rt[j*nF + k];
-          m2[k] += alpha * 2 * tmp * Lt[i*nF + k];
+          m1[k] += alpha * 2 * tmp * mt2[k];
+          m2[k] += alpha * 2 * tmp * mt1[k];
         }
       }
     }
   }
 
   /* matrix multiplication */
-  for (i = 0, mres = &B[i*nI], m1 = &L[i*nF]; i < nU;
-      ++i, mres += nI, m1 += nF) {
-    for (j = 0, m2 = &R[j*nF]; j < nI; ++j, m2 += nF) {
+  for (i = 0, m = &B[i * nI], m1 = &L[i * nF]; i < nU;
+      ++i, m += nI, m1 += nF) {
+    for (j = 0, m2 = &R[j * nF]; j < nI; ++j, m2 += nF) {
       tmp = 0;
       for (k = 0; k < nF; ++k) {
         tmp += m1[k] * m2[k];
       }
-      mres[j] = tmp;
+      m[j] = tmp;
     }
   }
 
-  /* FIXME: output */
-  for (i = 0; i < nU; ++i)
-    for (jx = A->row[i]; jx < A->row[i+1]; ++jx)
-      B[i*nI + A->col[jx]] = 0;
-  for (i = 0; i < nU; ++i) {
+  for (i = 0, m = &B[i * nI]; i < nU;
+      ++i, m += nI) {
+    for (jx = A->row[i], j = A->col[jx]; jx < A->row[i + 1];
+        ++jx, j = A->col[jx]) {
+      m[j] = 0;
+    }
+  }
+  for (i = 0, m = &B[i * nI]; i < nU;
+      ++i, m += nI) {
     item = 0; tmp = -1.0;
     for (j = 0; j < nI; ++j) {
-      if (B[i*nI + j] > tmp) {
-        tmp = B[i*nI + j];
+      if (m[j] > tmp) {
+        tmp = m[j];
         item = j;
       }
     }
@@ -225,12 +229,12 @@ main(int argc, char *argv[])
   csr_matrix_init(&A, nnz, nU);
   for (ij = 0; ij < nnz; ++ij) {
     i = parse_uint(fp);
-    A->row[i+1] += 1;
+    A->row[i + 1] += 1;
     A->col[ij] = parse_uint(fp);
     A->val[ij] = parse_double(fp);
   }
   for (i = 1; i <= nU; ++i)
-    A->row[i] += A->row[i-1];
+    A->row[i] += A->row[i - 1];
 
   if (0 != fclose(fp))
     die("unable to flush file stream.\n");

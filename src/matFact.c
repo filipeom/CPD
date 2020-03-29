@@ -156,8 +156,8 @@ run(uint n, double alpha, uint nU, uint nI, uint nF)
     memcpy(Lt, L, sizeof(double) * nU * nF);
 
     for (i = 0; i < nU; ++i) {
-      for (jx = A->row[i], j = A->col[jx]; jx < A->row[i + 1];
-          ++jx, j = A->col[jx]) {
+      for (jx = A->row[i]; jx < A->row[i + 1]; ++jx) {
+        j = A->col[jx];
         m1 = &L[i * nF]; mt1 = &Lt[i * nF];
         m2 = &R[j * nF]; mt2 = &Rt[j * nF];
         tmp = 0;
@@ -187,9 +187,8 @@ run(uint n, double alpha, uint nU, uint nI, uint nF)
 
   for (i = 0, m = &B[i * nI]; i < nU;
       ++i, m += nI) {
-    for (jx = A->row[i], j = A->col[jx]; jx < A->row[i + 1];
-        ++jx, j = A->col[jx]) {
-      m[j] = 0;
+    for (jx = A->row[i]; jx < A->row[i + 1]; ++jx) {
+      m[A->col[jx]] = 0;
     }
   }
   for (i = 0, m = &B[i * nI]; i < nU;

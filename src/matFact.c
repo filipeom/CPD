@@ -141,7 +141,7 @@ random_fill_LR(uint nU, uint nI, uint nF)
 }
 
 void
-run(uint n, double alpha, uint nU, uint nI, uint nF)
+solve(uint n, double alpha, uint nU, uint nI, uint nF)
 {
   size_t i, j, k;
   size_t jx, item;
@@ -212,11 +212,11 @@ main(int argc, char *argv[])
   size_t i, ij;
 
   argv0 = argv[0];
-  if (2 != argc)
-    usage();
+  if (2 != argc) usage();
 
-  if (NULL == (fp = fopen(argv[1], "r")))
+  if (NULL == (fp = fopen(argv[1], "r"))) {
     die("unable to open file: \'%s\'\n", argv[1]);
+  }
 
   uint N   = parse_uint(fp);
   double a = parse_double(fp);
@@ -226,17 +226,21 @@ main(int argc, char *argv[])
   uint nnz = parse_uint(fp);
 
   csr_matrix_init(&A, nnz, nU);
+
   for (ij = 0; ij < nnz; ++ij) {
     i = parse_uint(fp);
     A->row[i + 1] += 1;
     A->col[ij] = parse_uint(fp);
     A->val[ij] = parse_double(fp);
   }
-  for (i = 1; i <= nU; ++i)
-    A->row[i] += A->row[i - 1];
 
-  if (0 != fclose(fp))
+  for (i = 1; i <= nU; ++i) {
+    A->row[i] += A->row[i - 1];
+  }
+
+  if (0 != fclose(fp)) {
     die("unable to flush file stream.\n");
+  }
 
   matrix_init(&L, nU, nF);
   matrix_init(&Lt, nU, nF);
@@ -245,8 +249,7 @@ main(int argc, char *argv[])
   matrix_init(&B, nU, nI);
 
   random_fill_LR(nU, nI, nF);
-
-  run(N, a, nU, nI, nF);
+  solve(N, a, nU, nI, nF);
 
   matrix_destroy(B);
   matrix_destroy(Rt);

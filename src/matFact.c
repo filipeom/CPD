@@ -17,7 +17,6 @@ struct csr {
 static char *argv0 = NULL;
 static struct csr *A = NULL;
 
-static double *B  = NULL;
 static double *Lt = NULL;
 static double *L  = NULL;
 static double *Rt = NULL;
@@ -144,11 +143,11 @@ void
 solve(uint n, double alpha, uint nU, uint nI, uint nF)
 {
   size_t i, j, k;
-  size_t jx, item;
-  double tmp;
+  size_t jx;
+  double tmp, max;
   double *restrict m1, *restrict mt1;
   double *restrict m2, *restrict mt2;
-  double *restrict m;
+  uint rec[nU];
 
   /* matrix factorization */
   for (size_t it = n; it--; ) {
@@ -174,33 +173,29 @@ solve(uint n, double alpha, uint nU, uint nI, uint nF)
   }
 
   /* matrix multiplication */
-  for (i = 0, m = &B[i * nI], m1 = &L[i * nF]; i < nU;
-      ++i, m += nI, m1 += nF) {
+  for (i = 0, m1 = &L[i * nF]; i < nU; ++i, m1 += nF) {
+    max = 0;
+    jx = A->row[i];
     for (j = 0, m2 = &R[j * nF]; j < nI; ++j, m2 += nF) {
+      if ((A->row[i+1]-A->row[i]) &&
+          (jx < A->row[i+1]) && (j == A->col[jx])) {
+        jx++;
+        continue;
+      }
+
       tmp = 0;
       for (k = 0; k < nF; ++k) {
         tmp += m1[k] * m2[k];
       }
-      m[j] = tmp;
+      if (tmp > max) {
+        max = tmp;
+        rec[i] = j;
+      }
     }
   }
 
-  for (i = 0, m = &B[i * nI]; i < nU;
-      ++i, m += nI) {
-    for (jx = A->row[i]; jx < A->row[i + 1]; ++jx) {
-      m[A->col[jx]] = 0;
-    }
-  }
-  for (i = 0, m = &B[i * nI]; i < nU;
-      ++i, m += nI) {
-    item = 0; tmp = -1.0;
-    for (j = 0; j < nI; ++j) {
-      if (m[j] > tmp) {
-        tmp = m[j];
-        item = j;
-      }
-    }
-    printf("%lu\n", item);
+  for (i = 0; i < nU; ++i) {
+    printf("%u\n", rec[i]);
   }
 }
 
@@ -246,12 +241,10 @@ main(int argc, char *argv[])
   matrix_init(&Lt, nU, nF);
   matrix_init(&R, nI, nF);
   matrix_init(&Rt, nI, nF);
-  matrix_init(&B, nU, nI);
 
   random_fill_LR(nU, nI, nF);
   solve(N, a, nU, nI, nF);
 
-  matrix_destroy(B);
   matrix_destroy(Rt);
   matrix_destroy(R);
   matrix_destroy(Lt);

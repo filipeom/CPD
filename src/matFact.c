@@ -17,7 +17,6 @@ struct csr {
 static char *argv0 = NULL;
 static struct csr *A = NULL;
 
-static double *B  = NULL;
 static double *Lt = NULL;
 static double *L  = NULL;
 static double *Rt = NULL;
@@ -47,8 +46,9 @@ parse_uint(FILE *fp)
 {
   uint value;
 
-  if (1 != fscanf(fp, "%u", &value))
+  if (1 != fscanf(fp, "%u", &value)) {
     die("unable to parse integer.\n");
+  }
   return value;
 }
 
@@ -57,8 +57,9 @@ parse_double(FILE *fp)
 {
   double value;
 
-  if (1 != fscanf(fp, "%lf", &value))
+  if (1 != fscanf(fp, "%lf", &value)) {
     die("unable to parse double.\n");
+  }
   return value;
 }
 
@@ -67,8 +68,9 @@ void
 matrix_init(double *matrix[], uint l, uint c)
 {
   *matrix = (double *) malloc(sizeof(double) * l * c);
-  if (NULL == *matrix)
+  if (NULL == *matrix) {
     die("unable to allocate memory for matrix.\n");
+  }
 
   memset(*matrix, '\x00', sizeof(double) * l * c);
 }
@@ -76,8 +78,9 @@ matrix_init(double *matrix[], uint l, uint c)
 void
 matrix_destroy(double *matrix)
 {
-  if (NULL != matrix)
+  if (NULL != matrix) {
     free(matrix);
+  }
 }
 
 void
@@ -97,16 +100,17 @@ void
 csr_matrix_init(struct csr **matrix, uint nnz, uint nU)
 {
   *matrix = (struct csr *) malloc(sizeof(struct csr));
-  if (NULL == *matrix)
+  if (NULL == *matrix) {
     die("unable to allocate memory for sparse matrix.\n");
+  }
 
   (*matrix)->row = (uint *) malloc(sizeof(uint) * (nU + 1));
   (*matrix)->col = (uint *) malloc(sizeof(uint) * nnz);
   (*matrix)->val = (double *) malloc(sizeof(double) * nnz);
-
   if (NULL == (*matrix)->row || NULL == (*matrix)->col ||
-      NULL == (*matrix)->val)
+      NULL == (*matrix)->val) {
     die("unable to allocate memory for sparse matrix.\n");
+  }
 
   memset((*matrix)->row, '\x00', sizeof(uint) * (nU + 1));
 }
@@ -131,30 +135,31 @@ random_fill_LR(uint nU, uint nI, uint nF)
 
   srandom(0);
 
-  for (i = 0; i < nU; ++i)
-    for (j = 0; j < nF; ++j)
+  for (i = 0; i < nU; ++i) {
+    for (j = 0; j < nF; ++j) {
       L[i * nF + j] = RAND01 / (double) nF;
-
-  for (i = 0; i < nF; ++i)
-    for (j = 0; j < nI; ++j)
+    }    
+  }
+  for (i = 0; i < nF; ++i) {
+    for (j = 0; j < nI; ++j) {
       R[j * nF + i] = RAND01 / (double) nF;
+    }    
+  }
 }
 
 void
-run(uint n, double alpha, uint nU, uint nI, uint nF)
+solve(uint n, double alpha, uint nU, uint nI, uint nF)
 {
   size_t i, j, k;
-  size_t jx, item;
-  double tmp;
+  size_t jx;
+  double tmp, max;
   double *restrict m1, *restrict mt1;
   double *restrict m2, *restrict mt2;
-  double *restrict m;
+  uint best[nU];
 
-  /* matrix factorization */
   for (size_t it = n; it--; ) {
     memcpy(Rt, R, sizeof(double) * nI * nF);
     memcpy(Lt, L, sizeof(double) * nU * nF);
-
     for (i = 0; i < nU; ++i) {
       for (jx = A->row[i]; jx < A->row[i + 1]; ++jx) {
         j = A->col[jx];
@@ -173,34 +178,29 @@ run(uint n, double alpha, uint nU, uint nI, uint nF)
     }
   }
 
-  /* matrix multiplication */
-  for (i = 0, m = &B[i * nI], m1 = &L[i * nF]; i < nU;
-      ++i, m += nI, m1 += nF) {
+  for (i = 0, m1 = &L[i * nF]; i < nU; ++i, m1 += nF) {
+    max = 0;
+    jx = A->row[i];
     for (j = 0, m2 = &R[j * nF]; j < nI; ++j, m2 += nF) {
-      tmp = 0;
-      for (k = 0; k < nF; ++k) {
-        tmp += m1[k] * m2[k];
-      }
-      m[j] = tmp;
+      if ((A->row[i + 1] - A->row[i]) &&
+          (A->row[i + 1] > jx) &&
+          (A->col[jx] == j)) {
+        jx++;
+      } else {
+        tmp = 0;
+        for (k = 0; k < nF; ++k) {
+          tmp += m1[k] * m2[k];
+        }
+        if (tmp > max) {
+          max = tmp;
+          best[i] = j;
+        }
+      } 
     }
   }
 
-  for (i = 0, m = &B[i * nI]; i < nU;
-      ++i, m += nI) {
-    for (jx = A->row[i]; jx < A->row[i + 1]; ++jx) {
-      m[A->col[jx]] = 0;
-    }
-  }
-  for (i = 0, m = &B[i * nI]; i < nU;
-      ++i, m += nI) {
-    item = 0; tmp = -1.0;
-    for (j = 0; j < nI; ++j) {
-      if (m[j] > tmp) {
-        tmp = m[j];
-        item = j;
-      }
-    }
-    printf("%lu\n", item);
+  for (i = 0; i < nU; ++i) {
+    printf("%u\n", best[i]);
   }
 }
 
@@ -212,11 +212,11 @@ main(int argc, char *argv[])
   size_t i, ij;
 
   argv0 = argv[0];
-  if (2 != argc)
-    usage();
+  if (2 != argc) usage();
 
-  if (NULL == (fp = fopen(argv[1], "r")))
+  if (NULL == (fp = fopen(argv[1], "r"))) {
     die("unable to open file: \'%s\'\n", argv[1]);
+  }
 
   uint N   = parse_uint(fp);
   double a = parse_double(fp);
@@ -226,34 +226,34 @@ main(int argc, char *argv[])
   uint nnz = parse_uint(fp);
 
   csr_matrix_init(&A, nnz, nU);
+
   for (ij = 0; ij < nnz; ++ij) {
     i = parse_uint(fp);
     A->row[i + 1] += 1;
     A->col[ij] = parse_uint(fp);
     A->val[ij] = parse_double(fp);
   }
-  for (i = 1; i <= nU; ++i)
-    A->row[i] += A->row[i - 1];
 
-  if (0 != fclose(fp))
+  if (0 != fclose(fp)) {
     die("unable to flush file stream.\n");
+  }
+
+  for (i = 1; i <= nU; ++i) {
+    A->row[i] += A->row[i - 1];
+  }
 
   matrix_init(&L, nU, nF);
   matrix_init(&Lt, nU, nF);
   matrix_init(&R, nI, nF);
   matrix_init(&Rt, nI, nF);
-  matrix_init(&B, nU, nI);
 
   random_fill_LR(nU, nI, nF);
+  solve(N, a, nU, nI, nF);
 
-  run(N, a, nU, nI, nF);
-
-  matrix_destroy(B);
   matrix_destroy(Rt);
   matrix_destroy(R);
   matrix_destroy(Lt);
   matrix_destroy(L);
   csr_matrix_destroy(A);
-
   return 0;
 }

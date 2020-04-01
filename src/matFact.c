@@ -160,19 +160,20 @@ solve(uint n, double alpha, uint nU, uint nI, uint nF)
   for (size_t it = n; it--; ) {
     memcpy(Rt, R, sizeof(double) * nI * nF);
     memcpy(Lt, L, sizeof(double) * nU * nF);
-    for (i = 0; i < nU; ++i) {
+    for (i = 0, m1 = &L[i* nF], mt1 = &Lt[i * nF]; i < nU; 
+        ++i, m1 += nF, mt1 += nF) {
       for (jx = A->row[i]; jx < A->row[i + 1]; ++jx) {
         j = A->col[jx];
-        m1 = &L[i * nF]; mt1 = &Lt[i * nF];
-        m2 = &R[j * nF]; mt2 = &Rt[j * nF];
+        m2 = &R[j * nF];
+        mt2 = &Rt[j * nF];
         tmp = 0;
         for (k = 0; k < nF; ++k) {
           tmp += mt1[k] * mt2[k];
         }
-        tmp = A->val[jx] - tmp;
+        tmp = alpha * 2 * (A->val[jx] - tmp);
         for (k = 0; k < nF; ++k) {
-          m1[k] += alpha * 2 * tmp * mt2[k];
-          m2[k] += alpha * 2 * tmp * mt1[k];
+          m1[k] += tmp * mt2[k];
+          m2[k] += tmp * mt1[k];
         }
       }
     }

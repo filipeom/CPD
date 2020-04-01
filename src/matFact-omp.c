@@ -3,6 +3,8 @@
 #include <stdarg.h>
 #include <string.h>
 
+#include <omp.h>
+
 #define RAND01 ((double)random() / (double)RAND_MAX)
 
 typedef unsigned int uint;
@@ -150,59 +152,81 @@ random_fill_LR(uint nU, uint nI, uint nF)
 void
 solve(uint n, double alpha, uint nU, uint nI, uint nF)
 {
-  size_t i, j, k;
-  size_t jx;
-  double tmp, max;
-  double *restrict m1, *restrict mt1;
-  double *restrict m2, *restrict mt2;
   uint best[nU];
+  omp_lock_t *col_mutex;
 
-  for (size_t it = n; it--; ) {
-    memcpy(Rt, R, sizeof(double) * nI * nF);
-    memcpy(Lt, L, sizeof(double) * nU * nF);
-    for (i = 0, m1 = &L[i* nF], mt1 = &Lt[i * nF]; i < nU; 
-        ++i, m1 += nF, mt1 += nF) {
-      for (jx = A->row[i]; jx < A->row[i + 1]; ++jx) {
-        j = A->col[jx];
-        m2 = &R[j * nF];
-        mt2 = &Rt[j * nF];
-        tmp = 0;
-        for (k = 0; k < nF; ++k) {
-          tmp += mt1[k] * mt2[k];
+  col_mutex = (omp_lock_t *) malloc(sizeof(omp_lock_t) * nI);
+  for (size_t j = 0; j < nI; ++j) {
+    omp_init_lock(&col_mutex[j]);
+  }
+
+  #pragma omp parallel shared(L, Lt, R, Rt, A)
+  {
+    size_t i, j, k;
+    size_t jx;
+    double tmp, max;
+    double *restrict m1, *restrict mt1;
+    double *restrict m2, *restrict mt2;
+
+    for (size_t it = n; it--; ) {
+      #pragma omp single
+      {
+        memcpy(Rt, R, sizeof(double) * nI * nF);
+        memcpy(Lt, L, sizeof(double) * nU * nF);
+      }
+      #pragma omp for schedule(guided)
+      for (i = 0; i < nU; ++i) {
+        m1 = &L[i* nF]; mt1 = &Lt[i * nF];
+        for (jx = A->row[i]; jx < A->row[i + 1]; ++jx) {
+          j = A->col[jx];
+          m2 = &R[j * nF];
+          mt2 = &Rt[j * nF];
+          tmp = 0;
+          for (k = 0; k < nF; ++k) {
+            tmp += mt1[k] * mt2[k];
+          }
+          tmp = alpha * 2 * (A->val[jx] - tmp);
+          omp_set_lock(&col_mutex[j]);
+          for (k = 0; k < nF; ++k) {
+            m1[k] += tmp * mt2[k];
+            m2[k] += tmp * mt1[k];
+          }
+          omp_unset_lock(&col_mutex[j]);
         }
-        tmp = alpha * 2 * (A->val[jx] - tmp);
-        for (k = 0; k < nF; ++k) {
-          m1[k] += tmp * mt2[k];
-          m2[k] += tmp * mt1[k];
-        }
+      }
+    }
+
+    #pragma omp for schedule(static) nowait
+    for (i = 0; i < nU; ++i) {
+      max = 0;
+      jx = A->row[i];
+      m1 = &L[i * nF];
+      for (j = 0, m2 = &R[j * nF]; j < nI; ++j, m2 += nF) {
+        if ((A->row[i + 1] - A->row[i]) &&
+            (A->row[i + 1] > jx) &&
+            (A->col[jx] == j)) {
+          jx++;
+        } else {
+          tmp = 0;
+          for (k = 0; k < nF; ++k) {
+            tmp += m1[k] * m2[k];
+          }
+          if (tmp > max) {
+            max = tmp;
+            best[i] = j;
+          }
+        } 
       }
     }
   }
 
-  for (i = 0, m1 = &L[i * nF]; i < nU; ++i, m1 += nF) {
-    max = 0;
-    jx = A->row[i];
-    for (j = 0, m2 = &R[j * nF]; j < nI; ++j, m2 += nF) {
-      if ((A->row[i + 1] - A->row[i]) &&
-          (A->row[i + 1] > jx) &&
-          (A->col[jx] == j)) {
-        jx++;
-      } else {
-        tmp = 0;
-        for (k = 0; k < nF; ++k) {
-          tmp += m1[k] * m2[k];
-        }
-        if (tmp > max) {
-          max = tmp;
-          best[i] = j;
-        }
-      } 
-    }
-  }
-
-  for (i = 0; i < nU; ++i) {
+  for (size_t i = 0; i < nU; ++i) {
     printf("%u\n", best[i]);
   }
+  for (size_t j = 0; j < nI; ++j) {
+    omp_destroy_lock(&col_mutex[j]);
+  }
+  free(col_mutex);
 }
 
 /* main */

@@ -1,4 +1,4 @@
-CC=gcc
+CC=mpicc
 SRCDIR=src
 BUILDDIR=build
 TARGET=bin/matFact

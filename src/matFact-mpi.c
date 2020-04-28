@@ -3,6 +3,8 @@
 #include <stdarg.h>
 #include <string.h>
 
+#include <mpi.h>
+
 #define RAND01 ((double)random() / (double)RAND_MAX)
 
 typedef unsigned int uint;
@@ -16,6 +18,9 @@ struct csr {
 /* globals */
 static char *argv0 = NULL;
 static struct csr *A = NULL;
+
+static int id = 0;
+static int nproc = 0;
 
 static double *Lt = NULL;
 static double *L  = NULL;
@@ -201,7 +206,7 @@ solve(uint n, double alpha, uint nU, uint nI, uint nF)
   }
 
   for (i = 0; i < nU; ++i) {
-    printf("%u\n", best[i]);
+      printf("%u\n", best[i]);
   }
 }
 
@@ -212,8 +217,16 @@ main(int argc, char *argv[])
   FILE *fp;
   size_t i, ij;
 
+  MPI_Init(&argc, &argv);
+
+  MPI_Comm_rank(MPI_COMM_WORLD, &id);
+  MPI_Comm_size(MPI_COMM_WORLD, &nproc);
+
   argv0 = argv[0];
-  if (2 != argc) usage();
+  if (2 != argc) {
+    usage();
+    MPI_Finalize();
+  }
 
   if (NULL == (fp = fopen(argv[1], "r"))) {
     die("unable to open file: \'%s\'\n", argv[1]);
@@ -256,5 +269,7 @@ main(int argc, char *argv[])
   matrix_destroy(Lt);
   matrix_destroy(L);
   csr_matrix_destroy(A);
+
+  MPI_Finalize();
   return 0;
 }

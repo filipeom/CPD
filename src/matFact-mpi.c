@@ -17,15 +17,21 @@ struct csr {
 
 /* globals */
 static char *argv0 = NULL;
-static struct csr *A = NULL;
 
 static int id = 0;
 static int nproc = 0;
 
+static double *A  = NULL;
 static double *Lt = NULL;
 static double *L  = NULL;
 static double *Rt = NULL;
 static double *R  = NULL;
+
+static uint N   = 0;
+static double a = 0; 
+static uint nF  = 0;
+static uint nU  = 0;
+static uint nI  = 0;
 
 /* general helpers */
 void
@@ -134,7 +140,7 @@ csr_matrix_destroy(struct csr *matrix)
 
 /* matrix operations */
 void
-random_fill_LR(uint nU, uint nI, uint nF)
+random_fill_LR()
 {
   size_t i, j;
 
@@ -153,32 +159,32 @@ random_fill_LR(uint nU, uint nI, uint nF)
 }
 
 void
-solve(uint n, double alpha, uint nU, uint nI, uint nF)
+solve()
 {
   size_t i, j, k;
-  size_t jx;
   double tmp, max;
   double *restrict m1, *restrict mt1;
   double *restrict m2, *restrict mt2;
   uint best[nU];
 
-  for (size_t it = n; it--; ) {
+  for (size_t it = N; it--; ) {
     memcpy(Rt, R, sizeof(double) * nI * nF);
     memcpy(Lt, L, sizeof(double) * nU * nF);
-    for (i = 0, m1 = &L[i* nF], mt1 = &Lt[i * nF]; i < nU; 
+    for (i = 0, m1 = &L[i * nF], mt1 = &Lt[i * nF]; i < nU; 
         ++i, m1 += nF, mt1 += nF) {
-      for (jx = A->row[i]; jx < A->row[i + 1]; ++jx) {
-        j = A->col[jx];
-        m2 = &R[j * nF];
-        mt2 = &Rt[j * nF];
-        tmp = 0;
-        for (k = 0; k < nF; ++k) {
-          tmp += mt1[k] * mt2[k];
-        }
-        tmp = alpha * 2 * (A->val[jx] - tmp);
-        for (k = 0; k < nF; ++k) {
-          m1[k] += tmp * mt2[k];
-          m2[k] += tmp * mt1[k];
+      for (j = 0; j < nI; ++j) {
+        if (A[i*nI + j]) {
+          m2 = &R[j * nF];
+          mt2 = &Rt[j * nF];
+          tmp = 0;
+          for (k = 0; k < nF; ++k) {
+            tmp += mt1[k] * mt2[k];
+          }
+          tmp = a * 2 * (A[i*nI + j] - tmp);
+          for (k = 0; k < nF; ++k) {
+            m1[k] += tmp * mt2[k];
+            m2[k] += tmp * mt1[k];
+          }
         }
       }
     }
@@ -186,13 +192,8 @@ solve(uint n, double alpha, uint nU, uint nI, uint nF)
 
   for (i = 0, m1 = &L[i * nF]; i < nU; ++i, m1 += nF) {
     max = 0;
-    jx = A->row[i];
     for (j = 0, m2 = &R[j * nF]; j < nI; ++j, m2 += nF) {
-      if ((A->row[i + 1] - A->row[i]) &&
-          (A->row[i + 1] > jx) &&
-          (A->col[jx] == j)) {
-        jx++;
-      } else {
+      if (!A[i*nI + j]) {
         tmp = 0;
         for (k = 0; k < nF; ++k) {
           tmp += m1[k] * m2[k];
@@ -214,61 +215,83 @@ solve(uint n, double alpha, uint nU, uint nI, uint nF)
 int
 main(int argc, char *argv[])
 {
-  FILE *fp;
-  size_t i, ij;
-
   MPI_Init(&argc, &argv);
 
   MPI_Comm_rank(MPI_COMM_WORLD, &id);
   MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 
-  argv0 = argv[0];
-  if (2 != argc) {
-    usage();
-    MPI_Finalize();
+  if (0 == id) {
+    FILE *fp;
+    size_t i, j, nnz;
+
+    argv0 = argv[0] ;
+    if (2 != argc) {
+      usage();
+      MPI_Finalize();
+    }
+    
+    if (NULL == (fp = fopen(argv[1], "r"))) {
+      die("unable to open file: \'%s\'\n", argv[1]);
+    }
+
+    N   = parse_uint(fp);
+    a   = parse_double(fp);
+    nF  = parse_uint(fp);
+    nU  = parse_uint(fp);
+    nI  = parse_uint(fp);
+    nnz = parse_uint(fp);
+
+    matrix_init(&A, nU, nI);
+
+    for (size_t ij = 0; ij < nnz; ++ij) {
+      i = parse_uint(fp);
+      j = parse_uint(fp);
+      A[i*nI + j] = parse_double(fp);
+    }
+
+    if (0 != fclose(fp)) {
+      die("unable to flush file stream.\n");
+    }
+  } 
+
+  // TODO: Send one vector of unsigned => 2.5x less comms
+  MPI_Bcast(&N, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+  MPI_Bcast(&a, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  MPI_Bcast(&nF, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+  MPI_Bcast(&nU, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+  MPI_Bcast(&nI, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+
+  if (NULL == A)
+    matrix_init(&A, nU, nI);
+  
+#if 0
+  MPI_Status status;
+  if (!id) {
+    MPI_Send(&A, nU*nI, MPI_DOUBLE, 1, 42, MPI_COMM_WORLD);
+  } else {
+    MPI_Recv(&A, nU*nI, MPI_DOUBLE, 0, 42, MPI_COMM_WORLD, &status);
   }
 
-  if (NULL == (fp = fopen(argv[1], "r"))) {
-    die("unable to open file: \'%s\'\n", argv[1]);
-  }
+  MPI_Barrier(MPI_COMM_WORLD);
 
-  uint N   = parse_uint(fp);
-  double a = parse_double(fp);
-  uint nF  = parse_uint(fp);
-  uint nU  = parse_uint(fp);
-  uint nI  = parse_uint(fp);
-  uint nnz = parse_uint(fp);
-
-  csr_matrix_init(&A, nnz, nU);
-
-  for (ij = 0; ij < nnz; ++ij) {
-    i = parse_uint(fp);
-    A->row[i + 1] += 1;
-    A->col[ij] = parse_uint(fp);
-    A->val[ij] = parse_double(fp);
-  }
-
-  if (0 != fclose(fp)) {
-    die("unable to flush file stream.\n");
-  }
-
-  for (i = 1; i <= nU; ++i) {
-    A->row[i] += A->row[i - 1];
-  }
+  print_matrix(A, nU, nI);
+  printf("id{%d} -> {N=%u, a=%lf, nF=%u, nU=%u, nI=%u}\n",
+      id, N, a, nF, nU, nI);
+#endif
 
   matrix_init(&L, nU, nF);
   matrix_init(&Lt, nU, nF);
   matrix_init(&R, nI, nF);
   matrix_init(&Rt, nI, nF);
 
-  random_fill_LR(nU, nI, nF);
-  solve(N, a, nU, nI, nF);
+  random_fill_LR();
+  solve();
 
   matrix_destroy(Rt);
   matrix_destroy(R);
   matrix_destroy(Lt);
   matrix_destroy(L);
-  csr_matrix_destroy(A);
+  matrix_destroy(A);
 
   MPI_Finalize();
   return 0;

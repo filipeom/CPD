@@ -21,17 +21,17 @@ static char *argv0 = NULL;
 static int id = 0;
 static int nproc = 0;
 
-static double *A  = NULL;
-static double *Lt = NULL;
-static double *L  = NULL;
-static double *Rt = NULL;
-static double *R  = NULL;
-
 static uint N   = 0;
 static double a = 0; 
 static uint nF  = 0;
 static uint nU  = 0;
 static uint nI  = 0;
+
+static double *A  = NULL;
+static double *Lt = NULL;
+static double *L  = NULL;
+static double *Rt = NULL;
+static double *R  = NULL;
 
 /* general helpers */
 void
@@ -167,10 +167,13 @@ solve()
   double *restrict m2, *restrict mt2;
   uint best[nU];
 
+  uint low = id * nU / nproc;
+  uint high = (id + 1) * nU / nproc;
+
   for (size_t it = N; it--; ) {
     memcpy(Rt, R, sizeof(double) * nI * nF);
     memcpy(Lt, L, sizeof(double) * nU * nF);
-    for (i = 0, m1 = &L[i * nF], mt1 = &Lt[i * nF]; i < nU; 
+    for (i = low, m1 = &L[i * nF], mt1 = &Lt[i * nF]; i < high; 
         ++i, m1 += nF, mt1 += nF) {
       for (j = 0; j < nI; ++j) {
         if (A[i*nI + j]) {
@@ -190,7 +193,7 @@ solve()
     }
   }
 
-  for (i = 0, m1 = &L[i * nF]; i < nU; ++i, m1 += nF) {
+  for (i = low, m1 = &L[i * nF]; i < high; ++i, m1 += nF) {
     max = 0;
     for (j = 0, m2 = &R[j * nF]; j < nI; ++j, m2 += nF) {
       if (!A[i*nI + j]) {
@@ -206,7 +209,7 @@ solve()
     }
   }
 
-  for (i = 0; i < nU; ++i) {
+  for (i = low; i < high; ++i) {
       printf("%u\n", best[i]);
   }
 }
@@ -264,20 +267,7 @@ main(int argc, char *argv[])
   if (NULL == A)
     matrix_init(&A, nU, nI);
   
-#if 0
-  MPI_Status status;
-  if (!id) {
-    MPI_Send(&A, nU*nI, MPI_DOUBLE, 1, 42, MPI_COMM_WORLD);
-  } else {
-    MPI_Recv(&A, nU*nI, MPI_DOUBLE, 0, 42, MPI_COMM_WORLD, &status);
-  }
-
-  MPI_Barrier(MPI_COMM_WORLD);
-
-  print_matrix(A, nU, nI);
-  printf("id{%d} -> {N=%u, a=%lf, nF=%u, nU=%u, nI=%u}\n",
-      id, N, a, nF, nU, nI);
-#endif
+  MPI_Bcast(A, nU*nI, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
   matrix_init(&L, nU, nF);
   matrix_init(&Lt, nU, nF);

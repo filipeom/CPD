@@ -141,10 +141,14 @@ solve()
   double *m1, *m2;
   double *aux_ptr;
   uint best[nU];
-  
+  int low, high;
+
   while (N--) {
     aux_ptr = L; L = Lt; Lt = aux_ptr;
     aux_ptr = R; R = Rt; Rt = aux_ptr;
+
+    low = rank * nU / nproc;
+    high = (rank + 1) * nU / nproc;
 
     for (i = 0, m1 = &A[i*nI], m2 = &B[i*nI];
         i < nU; ++i, m1 += nI, m2 += nI)
@@ -153,7 +157,7 @@ solve()
           m2[j] = dot_prod(&Lt[i*nF], &Rt[j*nF], nF);
 
     // Update L
-    for (i = 0; i < nU; ++i) {
+    for (i = low; i < high; ++i) {
       // For each L_{i,*} we need the entire matrix R
       for (k = 0; k < nF; ++k) {
         tmp = 0;
@@ -165,8 +169,10 @@ solve()
       }
     }
 
+    low = rank * nI / nproc;
+    high = (rank + 1) * nI / nproc;
     // Update R
-    for (j = 0; j < nI; ++j) {
+    for (j = low; j < high; ++j) {
       // For each R_{*,j} we need the entire matrix L
       for (k = 0; k < nF; ++k) {
         tmp = 0;
@@ -178,52 +184,71 @@ solve()
       }
     }
 
-    if (DEBUG) {
+    low = rank * nU / nproc;
+    high = (rank + 1) * nU / nproc;
+
+    // FIXME: This code is ugly
+    int recvcnts[nproc];
+    int displs[nproc];
+    for (i = 0; i < nproc; ++i) {
+      int l = i * nU / nproc;
+      int h = (i + 1) * nU / nproc;
+      recvcnts[i] = ((h-l)*nF);
+      displs[i] = l*nF;
+    }
+    int size = (high-low)*nF;
+    MPI_Allgatherv(&L[low*nF], size, MPI_DOUBLE, L, recvcnts, displs, MPI_DOUBLE, MPI_COMM_WORLD);
+
+    // FIXME: This code is ugly
+    low = rank * nI / nproc;
+    high = (rank + 1) * nI / nproc;
+    size = (high-low)*nF;
+    for (i = 0; i < nproc; ++i) {
+      int l = i * nI / nproc;
+      int h = (i + 1) * nI / nproc;
+      recvcnts[i] = ((h-l)*nF);
+      displs[i] = l*nF;
+    }
+ 
+    MPI_Allgatherv(&R[low*nF], size, MPI_DOUBLE, R, recvcnts, displs, MPI_DOUBLE, MPI_COMM_WORLD);
+
+    if (0) {
       printf("[DEBUG] {rank=%d,L=\n", rank);
       matrix_print(L, nU, nF);
+      printf("}\n");
+      printf("[DEBUG] {rank=%d,Lt=\n", rank);
+      matrix_print(Lt, nU, nF);
       printf("}\n");
 
       printf("[DEBUG] {rank=%d,R=\n", rank);
       matrix_print(R, nI, nF);
       printf("}\n");
+      printf("[DEBUG] {rank=%d,Rt=\n", rank);
+      matrix_print(Rt, nI, nF);
+      printf("}\n");
     }
-#if 0
-    memcpy(Lt, L, sizeof(double) * nU * nF);
-    memcpy(Rt, R, sizeof(double) * nI * nF);
-    for (i = 0; i < nU; ++i) {
-      m1 = &L[i * nF]; mt1 = &Lt[i * nF];
+  }
+
+  low = rank * nU / nproc;
+  high = (rank + 1) * nU / nproc;
+  if (0 == rank) {
+    for (i = low; i < nU; ++i) {
+      max = 0;
+      m1 = &L[i * nF];
       for (j = 0; j < nI; ++j) {
-        if (A[i*nI +j]) {
-          m2 = &R[j * nF]; mt2 = &Rt[j * nF];
-          tmp = 0;
-          for (k = 0; k < nF; ++k) tmp += mt1[k] * mt2[k];
-          tmp = a * 2 * (A[i*nI + j] - tmp);
-          for (k = 0; k < nF; ++k) {
-            m1[k] += tmp * mt2[k];
-            m2[k] += tmp * mt1[k];
-          }
+        m2 = &R[j * nF];
+        if (A[i*nI + j]) continue;
+        tmp = 0;
+        for (k = 0; k < nF; ++k) tmp += m1[k] * m2[k];
+        if (tmp > max) {
+          max = tmp;
+          best[i] = j;
         }
       }
     }
-#endif
-  }
 
-  for (i = 0; i < nU; ++i) {
-    max = 0;
-    m1 = &L[i * nF];
-    for (j = 0; j < nI; ++j) {
-      m2 = &R[j * nF];
-      if (A[i*nI + j]) continue;
-      tmp = 0;
-      for (k = 0; k < nF; ++k) tmp += m1[k] * m2[k];
-      if (tmp > max) {
-        max = tmp;
-        best[i] = j;
-      }
-    }
-  }
-
-  for (i = 0; i < nU; ++i) printf("%u\n", best[i]);
+    for (i = 0; i < nU; ++i) printf("%u\n", best[i]);
+  }  
 }
 
 int
@@ -283,7 +308,10 @@ main(int argc, char* argv[])
 
   if (DEBUG) printf("[DEBUG] {rank=%d}->{N=%u,a=%lf,nF=%u,nU=%u,nI=%u}\n", rank, N, a, nF, nU, nI);
 
-  if (NULL == A) matrix_init(&A, nU, nI);
+  if (NULL == A) {
+    matrix_init(&A, nU, nI);
+    matrix_init(&B, nU, nI);
+  }
 
   MPI_Bcast(A, nU*nI, MPI_DOUBLE, 0, MPI_COMM_WORLD);
   

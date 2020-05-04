@@ -23,6 +23,7 @@ static uint nI = 0;  /* number of items */
 
 static double a = 0;  /* alpha constant */
 
+static double *B  = NULL;  /* evaluation matrix */
 static double *A  = NULL;  /* evaluation matrix */
 static double *Lt = NULL;  /* users-feats matrix (prev it) */ 
 static double *L  = NULL;  /* users-feats matrix (curr it) */
@@ -122,16 +123,71 @@ random_fill_LR()
   }
 }
 
+double
+dot_prod(double m1[], double m2[], size_t size)
+{
+  double ans = 0;
+  for (size_t ix = 0; ix < size; ++ix) {
+    ans += m1[ix] * m2[ix];
+  }
+  return ans;
+}
+
 void
 solve()
 {
   size_t i, j, k;
   double tmp, max;
-  double *m1, *mt1;
-  double *m2, *mt2;
+  double *m1, *m2;
+  double *aux_ptr;
   uint best[nU];
   
   while (N--) {
+    aux_ptr = L; L = Lt; Lt = aux_ptr;
+    aux_ptr = R; R = Rt; Rt = aux_ptr;
+
+    for (i = 0, m1 = &A[i*nI], m2 = &B[i*nI];
+        i < nU; ++i, m1 += nI, m2 += nI)
+      for (j = 0; j < nI; ++j)
+        if (m1[j])
+          m2[j] = dot_prod(&Lt[i*nF], &Rt[j*nF], nF);
+
+    // Update L
+    for (i = 0; i < nU; ++i) {
+      // For each L_{i,*} we need the entire matrix R
+      for (k = 0; k < nF; ++k) {
+        tmp = 0;
+        for (j = 0; j < nI; ++j) {
+          if (!A[i*nI+j]) continue;
+          tmp += 2 * (A[i*nI+j] - B[i*nI+j]) * (-Rt[j*nF+k]);
+        }
+        L[i*nF + k] = Lt[i*nF + k] - a * tmp;
+      }
+    }
+
+    // Update R
+    for (j = 0; j < nI; ++j) {
+      // For each R_{*,j} we need the entire matrix L
+      for (k = 0; k < nF; ++k) {
+        tmp = 0;
+        for (i = 0; i < nU; ++i) {
+          if (!A[i*nI+j]) continue;
+          tmp += 2 * (A[i*nI+j] - B[i*nI+j]) * (-Lt[i*nF+k]);
+        }
+        R[j*nF + k] = Rt[j*nF + k] - a * tmp;
+      }
+    }
+
+    if (DEBUG) {
+      printf("[DEBUG] {rank=%d,L=\n", rank);
+      matrix_print(L, nU, nF);
+      printf("}\n");
+
+      printf("[DEBUG] {rank=%d,R=\n", rank);
+      matrix_print(R, nI, nF);
+      printf("}\n");
+    }
+#if 0
     memcpy(Lt, L, sizeof(double) * nU * nF);
     memcpy(Rt, R, sizeof(double) * nI * nF);
     for (i = 0; i < nU; ++i) {
@@ -149,6 +205,7 @@ solve()
         }
       }
     }
+#endif
   }
 
   for (i = 0; i < nU; ++i) {
@@ -166,7 +223,7 @@ solve()
     }
   }
 
-  if (0 == rank) for (i = 0; i < nU; ++i) printf("%u\n", best[i]);
+  for (i = 0; i < nU; ++i) printf("%u\n", best[i]);
 }
 
 int
@@ -200,6 +257,7 @@ main(int argc, char* argv[])
     nI  = parse_uint(fp);
     nnz = parse_uint(fp);
 
+    matrix_init(&B, nU, nI);
     matrix_init(&A, nU, nI);
 
     /**
@@ -255,6 +313,7 @@ main(int argc, char* argv[])
   matrix_destroy(Lt);
   matrix_destroy(L);
   matrix_destroy(A);
+  matrix_destroy(B);
 
   MPI_Finalize();
   return 0;

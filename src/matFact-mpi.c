@@ -144,6 +144,8 @@ solve()
   int low, high;
 
   while (N--) {
+    MPI_Barrier(MPI_COMM_WORLD);
+
     aux_ptr = L; L = Lt; Lt = aux_ptr;
     aux_ptr = R; R = Rt; Rt = aux_ptr;
 
@@ -197,6 +199,9 @@ solve()
       displs[i] = l*nF;
     }
     int size = (high-low)*nF;
+
+    MPI_Barrier(MPI_COMM_WORLD);
+
     MPI_Allgatherv(&L[low*nF], size, MPI_DOUBLE, L, recvcnts, displs, MPI_DOUBLE, MPI_COMM_WORLD);
 
     // FIXME: This code is ugly

@@ -185,6 +185,19 @@ solve()
       }
     }
 
+    MPI_Allgatherv(
+        &L[low_L*nF],
+        chunk_size_L,
+        MPI_DOUBLE,
+        L,
+        recvcnts_L,
+        displs_L,
+        MPI_DOUBLE,
+        MPI_COMM_WORLD
+    );
+
+    MPI_Barrier(MPI_COMM_WORLD);
+
     // Update R
     for (j = low_R; j < high_R; ++j) {
       // For each R_{*,j} we need the entire matrix L
@@ -198,18 +211,6 @@ solve()
       }
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);
-
-    MPI_Allgatherv(
-        &L[low_L*nF],
-        chunk_size_L,
-        MPI_DOUBLE,
-        L,
-        recvcnts_L,
-        displs_L,
-        MPI_DOUBLE,
-        MPI_COMM_WORLD
-    );
     MPI_Allgatherv(
         &R[low_R*nF],
         chunk_size_R,

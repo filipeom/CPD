@@ -10,6 +10,12 @@
 
 typedef unsigned int uint;
 
+struct csr {
+  uint *row;
+  uint *col;
+  double *val;
+} __attribute((aligned(64)));
+
 /* globals */
 static char *argv0 = NULL;  /* name of the binary */
 
@@ -102,6 +108,36 @@ matrix_print(const double matrix[], const uint l, const uint c)
   }
 }
 
+void
+csr_matrix_init(struct csr **matrix, uint nnz)
+{
+  *matrix = (struct csr *) malloc(sizeof(struct csr));
+  if (NULL == *matrix) {
+    die("[ERROR] %s: unable to allocate matrix\n", "csr_matrix_init");
+  }
+
+  (*matrix)->row = (uint *) malloc(sizeof(uint) * nnz);
+  (*matrix)->col = (uint *) malloc(sizeof(uint) * nnz);
+  (*matrix)->val = (double *) malloc(sizeof(double) * nnz);
+  if (NULL == (*matrix)->row || NULL == (*matrix)->col ||
+      NULL == (*matrix)->val) {
+    die("[ERROR] %s: unable to allocate vector\n", "csr_matrix_init");
+  }
+  memset((*matrix)->row, '\x00', sizeof(uint) * nnz);
+}
+
+void
+csr_matrix_destroy(struct csr *matrix)
+{
+  if (NULL != matrix->row && NULL != matrix->col &&
+      NULL != matrix->val && NULL != matrix) {
+    free(matrix->row);
+    free(matrix->col);
+    free(matrix->val);
+    free(matrix);
+  }
+}
+
 /* required initilizer */
 void
 random_fill_LR()
@@ -136,6 +172,7 @@ dot_prod(double m1[], double m2[], size_t size)
 void
 solve()
 {
+  uint *best;
   size_t i, j, k;
   double tmp, max;
   double *m1, *m2;
@@ -167,7 +204,6 @@ solve()
 
     // Update L
     for (i = low_L; i < high_L; ++i) {
-      // For each L_{i,*} we need the entire matrix R
       for (j = 0; j < nI; ++j) {
         if (!A[i*nI + j]) continue;
         tmp = dot_prod(&Lt[i*nF], &Rt[j*nF], nF);
@@ -215,19 +251,21 @@ solve()
     MPI_Barrier(MPI_COMM_WORLD);
   }
 
-  uint best[nU];
+  uint ex;
+  uint best_chunk[high_L - low_L];
 
-  for (i = low_L; i < high_L; ++i) {
+  for (i = low_L, ex = 0; i < high_L; ++i, ++ex) {
     max = 0;
     m1 = &L[i * nF];
     for (j = 0; j < nI; ++j) {
       m2 = &R[j * nF];
       if (A[i*nI + j]) continue;
       tmp = 0;
-      for (k = 0; k < nF; ++k) tmp += m1[k] * m2[k];
+      for (k = 0; k < nF; ++k)
+        tmp += m1[k] * m2[k];
       if (tmp > max) {
         max = tmp;
-        best[i] = j;
+        best_chunk[ex] = j;
       }
     }
   }
@@ -239,8 +277,10 @@ solve()
     displs_L[i] = l;
   }
 
+  if (0 == rank) best = (uint *) malloc(sizeof(uint) * nU);
+
   MPI_Gatherv(
-      &best[low_L],
+      best_chunk,
       high_L - low_L,
       MPI_INT,
       best,
@@ -253,6 +293,7 @@ solve()
 
   if (0 == rank) {
     for (i = 0; i < nU; ++i) printf("%u\n", best[i]);
+    free(best);
   }
 }
 
@@ -294,7 +335,12 @@ main(int argc, char* argv[])
      * parse matrix A
      * TODO: distribute matrix A
      */
-    while (nnz--) {
+    for (size_t ij = 0; ij < nnz; ++ij) {
+#if 0
+      A->row[ij] = parse_uint(fp);
+      A->col[ij] = parse_uint(fp);
+      A->val[ij] = parse_uint(fp);
+#endif
       i = parse_uint(fp);
       j = parse_uint(fp);
       A[i* nI + j] = parse_double(fp);

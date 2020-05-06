@@ -305,8 +305,6 @@ main(int argc, char* argv[])
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 
-  if (DEBUG) printf("[DEBUG] {rank=%d,nproc=%d}\n", rank, nproc);
-
   if (0 == rank) {
     FILE *fp;
     size_t i, j, nnz;
@@ -357,11 +355,8 @@ main(int argc, char* argv[])
   MPI_Bcast(&a, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
   N = vec[0]; nF = vec[1]; nU = vec[2]; nI = vec[3];
 
-  if (DEBUG) printf("[DEBUG] {rank=%d}->{N=%u,a=%lf,nF=%u,nU=%u,nI=%u}\n", rank, N, a, nF, nU, nI);
-
   if (NULL == A) {
     matrix_init(&A, nU, nI);
-    matrix_init(&B, nU, nI);
   }
 
   MPI_Bcast(A, nU*nI, MPI_DOUBLE, 0, MPI_COMM_WORLD);
@@ -379,7 +374,6 @@ main(int argc, char* argv[])
   matrix_destroy(Lt);
   matrix_destroy(L);
   matrix_destroy(A);
-  matrix_destroy(B);
 
   MPI_Finalize();
   return 0;

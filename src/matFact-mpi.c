@@ -139,7 +139,6 @@ solve()
   size_t i, j, k;
   double tmp, max;
   double *m1, *m2;
-  double *aux_ptr;
   int low_L, high_L;
   int low_R, high_R;
   int chunk_size_L, chunk_size_R;
@@ -163,25 +162,18 @@ solve()
   }
 
   while (N--) {
-    aux_ptr = L; L = Lt; Lt = aux_ptr;
-    aux_ptr = R; R = Rt; Rt = aux_ptr;
-
-    for (i = 0, m1 = &A[i*nI], m2 = &B[i*nI];
-        i < nU; ++i, m1 += nI, m2 += nI)
-      for (j = 0; j < nI; ++j)
-        if (m1[j])
-          m2[j] = dot_prod(&Lt[i*nF], &Rt[j*nF], nF);
+    memcpy(Rt, R, sizeof(double) * nI * nF);
+    memcpy(Lt, L, sizeof(double) * nU * nF);
 
     // Update L
     for (i = low_L; i < high_L; ++i) {
       // For each L_{i,*} we need the entire matrix R
-      for (k = 0; k < nF; ++k) {
-        tmp = 0;
-        for (j = 0; j < nI; ++j) {
-          if (!A[i*nI+j]) continue;
-          tmp += 2 * (A[i*nI+j] - B[i*nI+j]) * (-Rt[j*nF+k]);
-        }
-        L[i*nF + k] = Lt[i*nF + k] - a * tmp;
+      for (j = 0; j < nI; ++j) {
+        if (!A[i*nI + j]) continue;
+        tmp = dot_prod(&Lt[i*nF], &Rt[j*nF], nF);
+        tmp = a * 2 * (A[i*nI + j] - tmp);
+        for (k = 0; k < nF; ++k)
+          L[i*nF + k] += tmp * Rt[j*nF + k];
       }
     }
 
@@ -199,15 +191,13 @@ solve()
     MPI_Barrier(MPI_COMM_WORLD);
 
     // Update R
-    for (j = low_R; j < high_R; ++j) {
-      // For each R_{*,j} we need the entire matrix L
-      for (k = 0; k < nF; ++k) {
-        tmp = 0;
-        for (i = 0; i < nU; ++i) {
-          if (!A[i*nI+j]) continue;
-          tmp += 2 * (A[i*nI+j] - B[i*nI+j]) * (-Lt[i*nF+k]);
-        }
-        R[j*nF + k] = Rt[j*nF + k] - a * tmp;
+    for (i = 0; i < nU; ++i) {
+      for (j = low_R; j < high_R; ++j) {
+        if (!A[i*nI + j]) continue;
+        tmp = dot_prod(&Lt[i*nF], &Rt[j*nF], nF);
+        tmp = a * 2 * (A[i*nI + j] - tmp);
+        for (k = 0; k < nF; ++k)
+          R[j*nF + k] += tmp * Lt[i*nF + k];
       }
     }
 

@@ -29,12 +29,13 @@ static uint nI = 0;  /* number of items */
 
 static double a = 0;  /* alpha constant */
 
-static double *B  = NULL;  /* evaluation matrix */
 static double *A  = NULL;  /* evaluation matrix */
 static double *Lt = NULL;  /* users-feats matrix (prev it) */ 
 static double *L  = NULL;  /* users-feats matrix (curr it) */
 static double *Rt = NULL;  /* feats-items matrix (prev it) */
 static double *R  = NULL;  /* feats-items matrix (curr it) */
+
+static struct csr *An = NULL;
 
 /* general helpers */
 void
@@ -260,9 +261,7 @@ solve()
     for (j = 0; j < nI; ++j) {
       m2 = &R[j * nF];
       if (A[i*nI + j]) continue;
-      tmp = 0;
-      for (k = 0; k < nF; ++k)
-        tmp += m1[k] * m2[k];
+      tmp = dot_prod(m1, m2, nF);
       if (tmp > max) {
         max = tmp;
         best_chunk[ex] = j;
@@ -326,8 +325,8 @@ main(int argc, char* argv[])
     nI  = parse_uint(fp);
     nnz = parse_uint(fp);
 
-    matrix_init(&B, nU, nI);
     matrix_init(&A, nU, nI);
+    csr_matrix_init(&An, nnz);
 
     /**
      * parse matrix A
@@ -335,9 +334,9 @@ main(int argc, char* argv[])
      */
     for (size_t ij = 0; ij < nnz; ++ij) {
 #if 0
-      A->row[ij] = parse_uint(fp);
-      A->col[ij] = parse_uint(fp);
-      A->val[ij] = parse_uint(fp);
+      An->row[ij] = parse_uint(fp);
+      An->col[ij] = parse_uint(fp);
+      An->val[ij] = parse_uint(fp);
 #endif
       i = parse_uint(fp);
       j = parse_uint(fp);

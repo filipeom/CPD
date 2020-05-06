@@ -366,7 +366,14 @@ main(int argc, char* argv[])
   matrix_init(&Rt, nI, nF);
 
   random_fill_LR();
+
+  double secs;
+  secs = - MPI_Wtime();
   solve();
+  secs += MPI_Wtime();
+  
+  // Redirect stdout to file and get time on stderr
+  if (0 == rank) fprintf(stderr, "Time = %12.6f sec\n", secs);
 
   matrix_destroy(Rt);
   matrix_destroy(R);

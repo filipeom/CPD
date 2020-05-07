@@ -22,20 +22,21 @@ static char *argv0 = NULL;  /* name of the binary */
 static int rank  = 0;  /* calling process id  */
 static int nproc = 0;  /* number of processes */
 
-static uint N  = 0;  /* iteration count */
-static uint nF = 0;  /* number of feats */
-static uint nU = 0;  /* number of users */
-static uint nI = 0;  /* number of items */
+static uint N   = 0;  /* iteration count */
+static uint nF  = 0;  /* number of feats */
+static uint nU  = 0;  /* number of users */
+static uint nI  = 0;  /* number of items */
+static uint nnz = 0;  /* number of !zero */
 
 static double a = 0;  /* alpha constant */
 
-static double *A  = NULL;  /* evaluation matrix */
 static double *Lt = NULL;  /* users-feats matrix (prev it) */ 
 static double *L  = NULL;  /* users-feats matrix (curr it) */
 static double *Rt = NULL;  /* feats-items matrix (prev it) */
 static double *R  = NULL;  /* feats-items matrix (curr it) */
 
 static struct csr *An = NULL;
+static struct csr *Ac = NULL;
 
 /* general helpers */
 void
@@ -109,22 +110,25 @@ matrix_print(const double matrix[], const uint l, const uint c)
   }
 }
 
-void
-csr_matrix_init(struct csr **matrix, uint nnz)
+struct csr *
+csr_matrix_init(uint nnz, uint rows)
 {
-  *matrix = (struct csr *) malloc(sizeof(struct csr));
-  if (NULL == *matrix) {
+  struct csr *matrix = (struct csr *) malloc(sizeof(struct csr));
+  if (NULL == matrix) {
     die("[ERROR] %s: unable to allocate matrix\n", "csr_matrix_init");
   }
 
-  (*matrix)->row = (uint *) malloc(sizeof(uint) * nnz);
-  (*matrix)->col = (uint *) malloc(sizeof(uint) * nnz);
-  (*matrix)->val = (double *) malloc(sizeof(double) * nnz);
-  if (NULL == (*matrix)->row || NULL == (*matrix)->col ||
-      NULL == (*matrix)->val) {
+  matrix->row = (uint *) malloc(sizeof(uint) * (rows + 1));
+  matrix->col = (uint *) malloc(sizeof(uint) * nnz);
+  matrix->val = (double *) malloc(sizeof(double) * nnz);
+  if (NULL == matrix->row || NULL == matrix->col ||
+      NULL == matrix->val) {
     die("[ERROR] %s: unable to allocate vector\n", "csr_matrix_init");
   }
-  memset((*matrix)->row, '\x00', sizeof(uint) * nnz);
+  memset(matrix->row, '\x00', sizeof(uint) * (rows + 1));
+  memset(matrix->col, '\x00', sizeof(uint) * nnz);
+  memset(matrix->val, '\x00', sizeof(double) * nnz);
+  return matrix;
 }
 
 void
@@ -174,7 +178,7 @@ void
 solve()
 {
   uint *best;
-  size_t i, j, k;
+  size_t i, j, k, jx, ix;
   double tmp, max;
   double *m1, *m2;
   int low_L, high_L;
@@ -205,10 +209,10 @@ solve()
 
     // Update L
     for (i = low_L; i < high_L; ++i) {
-      for (j = 0; j < nI; ++j) {
-        if (!A[i*nI + j]) continue;
+      for (jx = An->row[i]; jx < An->row[i + 1]; jx++) {
+        j = An->col[jx];
         tmp = dot_prod(&Lt[i*nF], &Rt[j*nF], nF);
-        tmp = a * 2 * (A[i*nI + j] - tmp);
+        tmp = a * 2 * (An->val[jx] - tmp);
         for (k = 0; k < nF; ++k)
           L[i*nF + k] += tmp * Rt[j*nF + k];
       }
@@ -225,14 +229,15 @@ solve()
         MPI_COMM_WORLD
     );
 
+
     MPI_Barrier(MPI_COMM_WORLD);
 
     // Update R
-    for (i = 0; i < nU; ++i) {
-      for (j = low_R; j < high_R; ++j) {
-        if (!A[i*nI + j]) continue;
+    for (j = low_R; j < high_R; ++j) {
+      for (ix = Ac->row[j]; ix < Ac->row[j + 1]; ix++) {
+        i = Ac->col[ix];
         tmp = dot_prod(&Lt[i*nF], &Rt[j*nF], nF);
-        tmp = a * 2 * (A[i*nI + j] - tmp);
+        tmp = a * 2 * (Ac->val[ix] - tmp);
         for (k = 0; k < nF; ++k)
           R[j*nF + k] += tmp * Lt[i*nF + k];
       }
@@ -252,19 +257,24 @@ solve()
     MPI_Barrier(MPI_COMM_WORLD);
   }
 
-  uint ex;
+  uint ex = 0;
   uint best_chunk[high_L - low_L];
 
   for (i = low_L, ex = 0; i < high_L; ++i, ++ex) {
     max = 0;
+    jx = An->row[i];
     m1 = &L[i * nF];
-    for (j = 0; j < nI; ++j) {
-      m2 = &R[j * nF];
-      if (A[i*nI + j]) continue;
-      tmp = dot_prod(m1, m2, nF);
-      if (tmp > max) {
-        max = tmp;
-        best_chunk[ex] = j;
+    for (j = 0, m2 = &R[j * nF]; j < nI; ++j, m2 += nF) {
+      if ((An->row[i + 1] - An->row[i]) &&
+          (An->row[i + 1] > jx) &&
+          (An->col[jx] == j)) {
+        jx++;
+      } else {
+        tmp = dot_prod(m1, m2, nF);
+        if (tmp > max) {
+          max = tmp;
+          best_chunk[ex] = j;
+        }
       }
     }
   }
@@ -276,7 +286,10 @@ solve()
     displs_L[i] = l;
   }
 
-  if (0 == rank) best = (uint *) malloc(sizeof(uint) * nU);
+  if (0 == rank) {
+    best = (uint *) malloc(sizeof(uint) * nU);
+    memset(best, '\x00', sizeof(uint) * nU);
+  }
 
   MPI_Gatherv(
       best_chunk,
@@ -306,7 +319,7 @@ main(int argc, char* argv[])
 
   if (0 == rank) {
     FILE *fp;
-    size_t i, j, nnz;
+    size_t i, j;
 
     argv0 = argv[0];
     if (2 != argc) {
@@ -325,40 +338,78 @@ main(int argc, char* argv[])
     nI  = parse_uint(fp);
     nnz = parse_uint(fp);
 
-    matrix_init(&A, nU, nI);
-    csr_matrix_init(&An, nnz);
+    An = csr_matrix_init(nnz, nU);
+    Ac = csr_matrix_init(nnz, nI);
 
     /**
      * parse matrix A
      * TODO: distribute matrix A
      */
-    for (size_t ij = 0; ij < nnz; ++ij) {
-#if 0
-      An->row[ij] = parse_uint(fp);
-      An->col[ij] = parse_uint(fp);
-      An->val[ij] = parse_uint(fp);
-#endif
+    for (uint ij = 0; ij < nnz; ++ij) {
       i = parse_uint(fp);
       j = parse_uint(fp);
-      A[i* nI + j] = parse_double(fp);
+      double val = parse_double(fp);
+      An->row[i+1] += 1;
+      Ac->row[j] += 1;
+      An->col[ij] = j;
+      An->val[ij] = val;
     }
 
     if (0 != fclose(fp)) {
       die("[ERROR] %s: unable to flush file stream\n", "main");
     }
+
+    for (i = 1; i <= nU; ++i) {
+      An->row[i] += An->row[i - 1];
+    }
+
+    /* CSR to CSC */
+    uint sum = 0;
+    uint tmp = 0;
+    for (j = 0; j < nI; ++j) {
+      tmp = Ac->row[j];
+      Ac->row[j] = sum;
+      sum += tmp;
+    }
+    Ac->row[nI] = nnz;
+    
+    for (i = 0; i < nU; ++i) {
+      for (size_t jx = An->row[i]; jx < An->row[i + 1]; ++jx) {
+        uint c = An->col[jx];
+        uint d = Ac->row[c];
+
+        Ac->col[d] = i;
+        Ac->val[d] = An->val[jx];
+        Ac->row[c]++;
+      }
+    }
+
+    uint lst = 0;
+    for (j = 0; j <= nI; ++j) {
+      tmp = Ac->row[j];
+      Ac->row[j] = lst;
+      lst = tmp;
+    }
   }
 
   /* send parameters to nodes */
-  uint vec[4] = {N, nF, nU, nI};
-  MPI_Bcast(vec, 4, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+  uint vec[5] = {N, nF, nU, nI, nnz};
+  MPI_Bcast(vec, 5, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
   MPI_Bcast(&a, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-  N = vec[0]; nF = vec[1]; nU = vec[2]; nI = vec[3];
+  N = vec[0]; nF = vec[1]; nU = vec[2]; nI = vec[3]; nnz = vec[4];
 
-  if (NULL == A) {
-    matrix_init(&A, nU, nI);
+  if ((NULL == An) && (NULL == Ac)) {
+    An = csr_matrix_init(nnz, nU);
+    Ac = csr_matrix_init(nnz, nI);
   }
 
-  MPI_Bcast(A, nU*nI, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  MPI_Bcast(An->row, nU + 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+  MPI_Bcast(An->col, nnz, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+  MPI_Bcast(An->val, nnz, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+  MPI_Bcast(Ac->row, nI + 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+  MPI_Bcast(Ac->col, nnz, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+  MPI_Bcast(Ac->val, nnz, MPI_DOUBLE, 0, MPI_COMM_WORLD);
   
   matrix_init(&L, nU, nF);
   matrix_init(&Lt, nU, nF);
@@ -379,7 +430,9 @@ main(int argc, char* argv[])
   matrix_destroy(R);
   matrix_destroy(Lt);
   matrix_destroy(L);
-  matrix_destroy(A);
+
+  csr_matrix_destroy(An);
+  csr_matrix_destroy(Ac);
 
   MPI_Finalize();
   return 0;

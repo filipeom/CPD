@@ -110,25 +110,24 @@ matrix_print(const double matrix[], const uint l, const uint c)
   }
 }
 
-struct csr *
-csr_matrix_init(uint nnz, uint rows)
+void
+csr_matrix_init(struct csr **matrix, uint nnz, uint rows)
 {
-  struct csr *matrix = (struct csr *) malloc(sizeof(struct csr));
-  if (NULL == matrix) {
+  *matrix = (struct csr *) malloc(sizeof(struct csr));
+  if (NULL == *matrix) {
     die("[ERROR] %s: unable to allocate matrix\n", "csr_matrix_init");
   }
 
-  matrix->row = (uint *) malloc(sizeof(uint) * (rows + 1));
-  matrix->col = (uint *) malloc(sizeof(uint) * nnz);
-  matrix->val = (double *) malloc(sizeof(double) * nnz);
-  if (NULL == matrix->row || NULL == matrix->col ||
-      NULL == matrix->val) {
+  (*matrix)->row = (uint *) malloc(sizeof(uint) * (rows + 1));
+  (*matrix)->col = (uint *) malloc(sizeof(uint) * nnz);
+  (*matrix)->val = (double *) malloc(sizeof(double) * nnz);
+  if (NULL == (*matrix)->row || NULL == (*matrix)->col ||
+      NULL == (*matrix)->val) {
     die("[ERROR] %s: unable to allocate vector\n", "csr_matrix_init");
   }
-  memset(matrix->row, '\x00', sizeof(uint) * (rows + 1));
-  memset(matrix->col, '\x00', sizeof(uint) * nnz);
-  memset(matrix->val, '\x00', sizeof(double) * nnz);
-  return matrix;
+  memset((*matrix)->row, '\x00', sizeof(uint) * (rows + 1));
+  memset((*matrix)->col, '\x00', sizeof(uint) * nnz);
+  memset((*matrix)->val, '\x00', sizeof(double) * nnz);
 }
 
 void
@@ -180,7 +179,7 @@ solve()
   uint *best;
   size_t i, j, k, jx, ix;
   double tmp, max;
-  double *m1, *m2;
+  double *m, *mt;
   int low_L, high_L;
   int low_R, high_R;
   int chunk_size_L, chunk_size_R;
@@ -209,12 +208,14 @@ solve()
 
     // Update L
     for (i = low_L; i < high_L; ++i) {
+      m = &L[i * nF];
       for (jx = An->row[i]; jx < An->row[i + 1]; jx++) {
         j = An->col[jx];
-        tmp = dot_prod(&Lt[i*nF], &Rt[j*nF], nF);
+        mt = &Rt[j * nF];
+        tmp = dot_prod(&Lt[i*nF], mt, nF);
         tmp = a * 2 * (An->val[jx] - tmp);
         for (k = 0; k < nF; ++k)
-          L[i*nF + k] += tmp * Rt[j*nF + k];
+          m[k] += tmp * mt[k];
       }
     }
 
@@ -234,12 +235,14 @@ solve()
 
     // Update R
     for (j = low_R; j < high_R; ++j) {
+      m = &R[j * nF];
       for (ix = Ac->row[j]; ix < Ac->row[j + 1]; ix++) {
         i = Ac->col[ix];
-        tmp = dot_prod(&Lt[i*nF], &Rt[j*nF], nF);
+        mt = &Lt[i * nF];
+        tmp = dot_prod(mt, &Rt[j*nF], nF);
         tmp = a * 2 * (Ac->val[ix] - tmp);
         for (k = 0; k < nF; ++k)
-          R[j*nF + k] += tmp * Lt[i*nF + k];
+          m[k] += tmp * mt[k];
       }
     }
 
@@ -263,14 +266,13 @@ solve()
   for (i = low_L, ex = 0; i < high_L; ++i, ++ex) {
     max = 0;
     jx = An->row[i];
-    m1 = &L[i * nF];
-    for (j = 0, m2 = &R[j * nF]; j < nI; ++j, m2 += nF) {
+    for (j = 0; j < nI; ++j) {
       if ((An->row[i + 1] - An->row[i]) &&
           (An->row[i + 1] > jx) &&
           (An->col[jx] == j)) {
         jx++;
       } else {
-        tmp = dot_prod(m1, m2, nF);
+        tmp = dot_prod(&L[i * nF], &R[j * nF], nF);
         if (tmp > max) {
           max = tmp;
           best_chunk[ex] = j;
@@ -338,8 +340,8 @@ main(int argc, char* argv[])
     nI  = parse_uint(fp);
     nnz = parse_uint(fp);
 
-    An = csr_matrix_init(nnz, nU);
-    Ac = csr_matrix_init(nnz, nI);
+    csr_matrix_init(&An, nnz, nU);
+    csr_matrix_init(&Ac, nnz, nI);
 
     /**
      * parse matrix A
@@ -399,8 +401,8 @@ main(int argc, char* argv[])
   N = vec[0]; nF = vec[1]; nU = vec[2]; nI = vec[3]; nnz = vec[4];
 
   if ((NULL == An) && (NULL == Ac)) {
-    An = csr_matrix_init(nnz, nU);
-    Ac = csr_matrix_init(nnz, nI);
+    csr_matrix_init(&An, nnz, nU);
+    csr_matrix_init(&Ac, nnz, nI);
   }
 
   MPI_Bcast(An->row, nU + 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);

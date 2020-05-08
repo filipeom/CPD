@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
@@ -17,9 +18,7 @@ struct csr {
 } __attribute((aligned(64)));
 
 /* globals */
-static char *argv0 = NULL;  /* name of the binary */
-
-static int rank  = 0;  /* calling process id  */
+static int pid  = 0;  /* calling process id  */
 static int nproc = 0;  /* number of processes */
 
 static uint N   = 0;  /* iteration count */
@@ -35,7 +34,7 @@ static double *L  = NULL;  /* users-feats matrix (curr it) */
 static double *Rt = NULL;  /* feats-items matrix (prev it) */
 static double *R  = NULL;  /* feats-items matrix (curr it) */
 
-static struct csr *An = NULL;
+static struct csr *Al = NULL;
 static struct csr *Ac = NULL;
 
 /* general helpers */
@@ -50,51 +49,62 @@ die(const char *err_str, ...)
   exit(1);
 }
 
-void
-usage(void)
+void *
+xmalloc(size_t len)
 {
-  die("usage:\n\t%s <input-file>\n", argv0);
+  void *ptr;
+
+  if (NULL == (ptr = malloc(len))) {
+    die("malloc: %s\n", strerror(errno));
+  }
+
+  return ptr;
 }
 
 /* parsing helpers */
 uint
 parse_uint(FILE *fp)
 {
-  uint val = 0;
+  uint val;
 
   if (1 != fscanf(fp, "%u", &val)) {
-    die("[ERROR] %s: unable to parse value.\n", "parse_uint");
+    die("parse_uint: unable to parse value.\n");
   }
+
   return val;
 }
 
 double
 parse_double(FILE *fp)
 {
-  double val = 0;
+  double val;
 
   if (1 != fscanf(fp, "%lf", &val)) {
-    die("[ERROR] %s: unable to parse value.\n", "parse_double");
+    die("parse_double: unable to parse value.\n");
   }
+
   return val;
 }
 
 /* matrix helpers */
-void
-matrix_init(double *matrix[], uint l, uint c)
+double *
+matrix_init(uint l, uint c)
 {
-  *matrix = (double *) malloc(sizeof(double) * l * c);
-  if (NULL == *matrix) {
-    die("[ERROR] %s: unable to allocate matrix\n", "matrix_init");
-  }
-  memset(*matrix, '\x00', sizeof(double) * l * c);
+  double *matrix;
+
+  matrix = (double *) xmalloc(sizeof(double) * (l * c));
+
+  memset(matrix, '\x00', sizeof(double) * (l * c));
+
+  return matrix;
 }
 
 void
-matrix_destroy(double matrix[]) {
-  if (NULL != matrix) {
-    free(matrix);
-  }
+matrix_destroy(double *matrix[]) {
+  if (NULL != *matrix)
+    free(*matrix);
+
+  *matrix = NULL;
 }
 
 void
@@ -110,36 +120,38 @@ matrix_print(const double matrix[], const uint l, const uint c)
   }
 }
 
-void
-csr_matrix_init(struct csr **matrix, uint nnz, uint rows)
+struct csr *
+csr_matrix_init(uint nrows, uint nnz)
 {
-  *matrix = (struct csr *) malloc(sizeof(struct csr));
-  if (NULL == *matrix) {
-    die("[ERROR] %s: unable to allocate matrix\n", "csr_matrix_init");
-  }
+  struct csr *matrix;
 
-  (*matrix)->row = (uint *) malloc(sizeof(uint) * (rows + 1));
-  (*matrix)->col = (uint *) malloc(sizeof(uint) * nnz);
-  (*matrix)->val = (double *) malloc(sizeof(double) * nnz);
-  if (NULL == (*matrix)->row || NULL == (*matrix)->col ||
-      NULL == (*matrix)->val) {
-    die("[ERROR] %s: unable to allocate vector\n", "csr_matrix_init");
-  }
-  memset((*matrix)->row, '\x00', sizeof(uint) * (rows + 1));
-  memset((*matrix)->col, '\x00', sizeof(uint) * nnz);
-  memset((*matrix)->val, '\x00', sizeof(double) * nnz);
+  matrix = (struct csr *) xmalloc(sizeof(struct csr));
+
+  matrix->row = (uint *) xmalloc(sizeof(uint) * (nrows + 1));
+  matrix->col = (uint *) xmalloc(sizeof(uint) * nnz);
+  matrix->val = (double *) xmalloc(sizeof(double) * nnz);
+
+  memset(matrix->row, '\x00', sizeof(uint) * (nrows + 1));
+  memset(matrix->col, '\x00', sizeof(uint) * nnz);
+  memset(matrix->val, '\x00', sizeof(double) * nnz);
+
+  return matrix;
 }
 
 void
-csr_matrix_destroy(struct csr *matrix)
+csr_matrix_destroy(struct csr **matrix)
 {
-  if (NULL != matrix->row && NULL != matrix->col &&
-      NULL != matrix->val && NULL != matrix) {
-    free(matrix->row);
-    free(matrix->col);
-    free(matrix->val);
-    free(matrix);
+  struct csr *m = *matrix;
+
+  if (NULL != m->row && NULL != m->col &&
+      NULL != m->val && NULL != m) {
+    free(m->row);
+    free(m->col);
+    free(m->val);
+    free(m);
   }
+
+  *matrix = NULL;
 }
 
 /* required initilizer */
@@ -167,39 +179,50 @@ double
 dot_prod(double m1[], double m2[], size_t size)
 {
   double ans = 0;
+
   for (size_t k = 0; k < size; ++k) {
     ans += m1[k] * m2[k];
   }
+
   return ans;
 }
 
 void
 solve()
 {
-  uint *best;
+  uint *best, *chunk;
   size_t i, j, k, jx, ix;
   double tmp, max;
   double *m, *mt;
-  int low_L, high_L;
-  int low_R, high_R;
-  int chunk_size_L, chunk_size_R;
-  int recvcnts_L[nproc], displs_L[nproc];
-  int recvcnts_R[nproc], displs_R[nproc];
-
-  low_L = rank * nU / nproc; high_L = (rank + 1) * nU / nproc;
-  low_R = rank * nI / nproc; high_R = (rank + 1) * nI / nproc;
+  int low, low_L, low_R;
+  int high, high_L, high_R;
+  int chunk_L, chunk_R;
+  int cnts_L[nproc], cnts_R[nproc];
+  int offs_L[nproc], offs_R[nproc];
   
-  chunk_size_L = (high_L - low_L) * nF;
-  chunk_size_R = (high_R - low_R) * nF;
+  if (0 == pid) {
+    best = (uint *) xmalloc(sizeof(uint) * nU);
+  }
+
+  low_L   = pid * nU / nproc;
+  low_R   = pid * nI / nproc; 
+  high_L  = (pid + 1) * nU / nproc;
+  high_R  = (pid + 1) * nI / nproc;
+  chunk_L = (high_L - low_L) * nF;
+  chunk_R = (high_R - low_R) * nF;
+
+  chunk = (uint *) xmalloc(sizeof(uint) * (high_L - low_L));
 
   for (i = 0; i < nproc; ++i) {
-    int l = i * nU / nproc;
-    int h = (i + 1) * nU / nproc;
-    recvcnts_L[i] = (h - l) * nF; displs_L[i] = l * nF;
+    low       = i * nU / nproc;
+    high      = (i + 1) * nU / nproc;
+    cnts_L[i] = (high - low) * nF;
+    offs_L[i] = low * nF;
     
-    l = i * nI / nproc;
-    h = (i + 1) * nI / nproc;
-    recvcnts_R[i] = (h - l) * nF; displs_R[i] = l * nF;
+    low       = i * nI / nproc;
+    high      = (i + 1) * nI / nproc;
+    cnts_R[i] = (high - low) * nF;
+    offs_R[i] = low * nF;
   }
 
   while (N--) {
@@ -209,29 +232,28 @@ solve()
     // Update L
     for (i = low_L; i < high_L; ++i) {
       m = &L[i * nF];
-      for (jx = An->row[i]; jx < An->row[i + 1]; jx++) {
-        j = An->col[jx];
+      for (jx = Al->row[i]; jx < Al->row[i + 1]; jx++) {
+        j = Al->col[jx];
         mt = &Rt[j * nF];
         tmp = dot_prod(&Lt[i*nF], mt, nF);
-        tmp = a * 2 * (An->val[jx] - tmp);
+        tmp = a * 2 * (Al->val[jx] - tmp);
         for (k = 0; k < nF; ++k)
           m[k] += tmp * mt[k];
       }
     }
 
     MPI_Allgatherv(
-        &L[low_L*nF],
-        chunk_size_L,
+        &L[low_L*nF],     /* src buffer */
+        chunk_L,          /* length of data to send */
         MPI_DOUBLE,
-        L,
-        recvcnts_L,
-        displs_L,
+        L,                /* recv buffer */
+        cnts_L,           /* buffer with the recvcnt from each proc */
+        offs_L,           /* offset where each proc should write to L */
         MPI_DOUBLE,
-        MPI_COMM_WORLD
+        MPI_COMM_WORLD    /* group of processes involved in this comm */
     );
 
-
-    MPI_Barrier(MPI_COMM_WORLD);
+    //MPI_Barrier(MPI_COMM_WORLD);
 
     // Update R
     for (j = low_R; j < high_R; ++j) {
@@ -247,68 +269,65 @@ solve()
     }
 
     MPI_Allgatherv(
-        &R[low_R*nF],
-        chunk_size_R,
+        &R[low_R*nF],     /* src buffer */
+        chunk_R,          /* length of data to send */
         MPI_DOUBLE,
-        R,
-        recvcnts_R,
-        displs_R,
+        R,                /* recv buffer */
+        cnts_R,           /* buffer with the recvcnt from each proc */
+        offs_R,           /* offset where each proc should write to R */
         MPI_DOUBLE,
-        MPI_COMM_WORLD
+        MPI_COMM_WORLD    /* group of processes involved in this comm */
     );
 
     MPI_Barrier(MPI_COMM_WORLD);
-  }
+  } /* end while */
 
-  uint ex = 0;
-  uint best_chunk[high_L - low_L];
-
-  for (i = low_L, ex = 0; i < high_L; ++i, ++ex) {
+  for (i = low_L, ix = 0; i < high_L; ++i, ++ix) {
     max = 0;
-    jx = An->row[i];
+    jx = Al->row[i];
     for (j = 0; j < nI; ++j) {
-      if ((An->row[i + 1] - An->row[i]) &&
-          (An->row[i + 1] > jx) &&
-          (An->col[jx] == j)) {
+      if ((Al->row[i + 1] - Al->row[i]) &&
+          (Al->row[i + 1] > jx) &&
+          (Al->col[jx] == j)) {
         jx++;
       } else {
         tmp = dot_prod(&L[i * nF], &R[j * nF], nF);
         if (tmp > max) {
           max = tmp;
-          best_chunk[ex] = j;
+          chunk[ix] = j;
         }
       }
     }
   }
 
   for (i = 0; i < nproc; ++i) {
-    int l = i * nU / nproc;
-    int h = (i + 1) * nU / nproc;
-    recvcnts_L[i] = h - l;
-    displs_L[i] = l;
+    low = i * nU / nproc;
+    high = (i + 1) * nU / nproc;
+    cnts_L[i] = high - low;
+    offs_L[i] = low;
   }
 
-  if (0 == rank) {
-    best = (uint *) malloc(sizeof(uint) * nU);
-    memset(best, '\x00', sizeof(uint) * nU);
-  }
 
   MPI_Gatherv(
-      best_chunk,
+      chunk,
       high_L - low_L,
       MPI_INT,
       best,
-      recvcnts_L,
-      displs_L,
+      cnts_L,
+      offs_L,
       MPI_INT,
       0,
       MPI_COMM_WORLD
   );
 
-  if (0 == rank) {
+  if (0 == pid) {
     for (i = 0; i < nU; ++i) printf("%u\n", best[i]);
     free(best);
+    best = NULL;
   }
+
+  free(chunk);
+  chunk = NULL;
 }
 
 int
@@ -316,21 +335,21 @@ main(int argc, char* argv[])
 {
   MPI_Init(&argc, &argv);
 
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  MPI_Comm_rank(MPI_COMM_WORLD, &pid);
   MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 
-  if (0 == rank) {
+  if (2 != argc) {
+    MPI_Finalize();
+    die("usage:\n\t%s <input-file>\n", argv[0]);
+  }
+
+  if (0 == pid) {
     FILE *fp;
     size_t i, j;
-
-    argv0 = argv[0];
-    if (2 != argc) {
-      MPI_Finalize();
-      usage();
-    }
+    uint sum, tmp, lst;
 
     if (NULL == (fp = fopen(argv[1], "r"))) {
-      die("[ERROR] %s: unable to open file \'%s\'\n", "main", argv[1]);
+      die("main: unable to open file \'%s\'\n", argv[1]);
     }
     
     N   = parse_uint(fp);
@@ -340,35 +359,32 @@ main(int argc, char* argv[])
     nI  = parse_uint(fp);
     nnz = parse_uint(fp);
 
-    csr_matrix_init(&An, nnz, nU);
-    csr_matrix_init(&Ac, nnz, nI);
+    Al = csr_matrix_init(nU, nnz);
+    Ac = csr_matrix_init(nI, nnz);
 
-    /**
+    /*
      * parse matrix A
      * TODO: distribute matrix A
      */
     for (uint ij = 0; ij < nnz; ++ij) {
       i = parse_uint(fp);
       j = parse_uint(fp);
-      double val = parse_double(fp);
-      An->row[i+1] += 1;
+      Al->row[i+1] += 1;
       Ac->row[j] += 1;
-      An->col[ij] = j;
-      An->val[ij] = val;
+      Al->col[ij] = j;
+      Al->val[ij] = parse_double(fp);
     }
 
     if (0 != fclose(fp)) {
-      die("[ERROR] %s: unable to flush file stream\n", "main");
+      die("main: unable to flush file stream\n");
     }
 
     for (i = 1; i <= nU; ++i) {
-      An->row[i] += An->row[i - 1];
+      Al->row[i] += Al->row[i - 1];
     }
 
     /* CSR to CSC */
-    uint sum = 0;
-    uint tmp = 0;
-    for (j = 0; j < nI; ++j) {
+    for (j = 0, sum = 0; j < nI; ++j) {
       tmp = Ac->row[j];
       Ac->row[j] = sum;
       sum += tmp;
@@ -376,18 +392,17 @@ main(int argc, char* argv[])
     Ac->row[nI] = nnz;
     
     for (i = 0; i < nU; ++i) {
-      for (size_t jx = An->row[i]; jx < An->row[i + 1]; ++jx) {
-        uint c = An->col[jx];
+      for (size_t jx = Al->row[i]; jx < Al->row[i + 1]; ++jx) {
+        uint c = Al->col[jx];
         uint d = Ac->row[c];
 
         Ac->col[d] = i;
-        Ac->val[d] = An->val[jx];
+        Ac->val[d] = Al->val[jx];
         Ac->row[c]++;
       }
     }
 
-    uint lst = 0;
-    for (j = 0; j <= nI; ++j) {
+    for (j = 0, lst = 0; j <= nI; ++j) {
       tmp = Ac->row[j];
       Ac->row[j] = lst;
       lst = tmp;
@@ -398,25 +413,29 @@ main(int argc, char* argv[])
   uint vec[5] = {N, nF, nU, nI, nnz};
   MPI_Bcast(vec, 5, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
   MPI_Bcast(&a, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-  N = vec[0]; nF = vec[1]; nU = vec[2]; nI = vec[3]; nnz = vec[4];
+  N   = vec[0];
+  nF  = vec[1]; 
+  nU  = vec[2];
+  nI  = vec[3]; 
+  nnz = vec[4];
 
-  if ((NULL == An) && (NULL == Ac)) {
-    csr_matrix_init(&An, nnz, nU);
-    csr_matrix_init(&Ac, nnz, nI);
+  if ((NULL == Al) && (NULL == Ac)) {
+    Al = csr_matrix_init(nU, nnz);
+    Ac = csr_matrix_init(nI, nnz);
   }
 
-  MPI_Bcast(An->row, nU + 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
-  MPI_Bcast(An->col, nnz, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
-  MPI_Bcast(An->val, nnz, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  MPI_Bcast(Al->row, nU + 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+  MPI_Bcast(Al->col, nnz, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+  MPI_Bcast(Al->val, nnz, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
   MPI_Bcast(Ac->row, nI + 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
   MPI_Bcast(Ac->col, nnz, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
   MPI_Bcast(Ac->val, nnz, MPI_DOUBLE, 0, MPI_COMM_WORLD);
   
-  matrix_init(&L, nU, nF);
-  matrix_init(&Lt, nU, nF);
-  matrix_init(&R, nI, nF);
-  matrix_init(&Rt, nI, nF);
+  L  = matrix_init(nU, nF);
+  Lt = matrix_init(nU, nF);
+  R  = matrix_init(nI, nF);
+  Rt = matrix_init(nI, nF);
 
   random_fill_LR();
 
@@ -426,15 +445,15 @@ main(int argc, char* argv[])
   secs += MPI_Wtime();
   
   // Redirect stdout to file and get time on stderr
-  if (0 == rank) fprintf(stderr, "Time = %12.6f sec\n", secs);
+  if (0 == pid) fprintf(stderr, "Time = %12.6f sec\n", secs);
 
-  matrix_destroy(Rt);
-  matrix_destroy(R);
-  matrix_destroy(Lt);
-  matrix_destroy(L);
+  matrix_destroy(&Rt);
+  matrix_destroy(&R);
+  matrix_destroy(&Lt);
+  matrix_destroy(&L);
 
-  csr_matrix_destroy(An);
-  csr_matrix_destroy(Ac);
+  csr_matrix_destroy(&Al);
+  csr_matrix_destroy(&Ac);
 
   MPI_Finalize();
   return 0;

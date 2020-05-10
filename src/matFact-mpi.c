@@ -253,8 +253,6 @@ solve()
         MPI_COMM_WORLD    /* group of processes involved in this comm */
     );
 
-    //MPI_Barrier(MPI_COMM_WORLD);
-
     // Update R
     for (j = low_R; j < high_R; ++j) {
       m = &R[j * nF];
@@ -279,6 +277,7 @@ solve()
         MPI_COMM_WORLD    /* group of processes involved in this comm */
     );
 
+    /* Synchronization necessary before each new iteration */
     MPI_Barrier(MPI_COMM_WORLD);
   } /* end while */
 

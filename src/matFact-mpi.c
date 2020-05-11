@@ -6,16 +6,17 @@
 
 #include <mpi.h>
 
+#define TAG    0x42
 #define DEBUG  0
 #define RAND01 ((double)rand() / (double)RAND_MAX)
 
 typedef unsigned int uint;
 
 struct csr {
-  uint *row;
-  uint *col;
+  uint   *row;
+  uint   *col;
   double *val;
-} __attribute((aligned(64)));
+};
 
 /* globals */
 static int pid  = 0;  /* calling process id  */
@@ -34,8 +35,8 @@ static double *L  = NULL;  /* users-feats matrix (curr it) */
 static double *Rt = NULL;  /* feats-items matrix (prev it) */
 static double *R  = NULL;  /* feats-items matrix (curr it) */
 
-static struct csr *Al = NULL;
-static struct csr *Ac = NULL;
+static struct csr *A  = NULL;
+static struct csr *At = NULL;
 
 /* general helpers */
 void
@@ -46,7 +47,8 @@ die(const char *err_str, ...)
   va_start(ap, err_str);
   vfprintf(stderr, err_str, ap);
   va_end(ap);
-  exit(1);
+  /* abort all other */
+  MPI_Abort(MPI_COMM_WORLD, 1);
 }
 
 void *
@@ -232,11 +234,11 @@ solve()
     // Update L
     for (i = low_L; i < high_L; ++i) {
       m = &L[i * nF];
-      for (jx = Al->row[i]; jx < Al->row[i + 1]; jx++) {
-        j = Al->col[jx];
+      for (jx = A->row[i]; jx < A->row[i + 1]; jx++) {
+        j = A->col[jx];
         mt = &Rt[j * nF];
         tmp = dot_prod(&Lt[i*nF], mt, nF);
-        tmp = a * 2 * (Al->val[jx] - tmp);
+        tmp = a * 2 * (A->val[jx] - tmp);
         for (k = 0; k < nF; ++k)
           m[k] += tmp * mt[k];
       }
@@ -256,11 +258,11 @@ solve()
     // Update R
     for (j = low_R; j < high_R; ++j) {
       m = &R[j * nF];
-      for (ix = Ac->row[j]; ix < Ac->row[j + 1]; ix++) {
-        i = Ac->col[ix];
+      for (ix = At->row[j]; ix < At->row[j + 1]; ix++) {
+        i = At->col[ix];
         mt = &Lt[i * nF];
         tmp = dot_prod(mt, &Rt[j*nF], nF);
-        tmp = a * 2 * (Ac->val[ix] - tmp);
+        tmp = a * 2 * (At->val[ix] - tmp);
         for (k = 0; k < nF; ++k)
           m[k] += tmp * mt[k];
       }
@@ -283,11 +285,11 @@ solve()
 
   for (i = low_L, ix = 0; i < high_L; ++i, ++ix) {
     max = 0;
-    jx = Al->row[i];
+    jx = A->row[i];
     for (j = 0; j < nI; ++j) {
-      if ((Al->row[i + 1] - Al->row[i]) &&
-          (Al->row[i + 1] > jx) &&
-          (Al->col[jx] == j)) {
+      if ((A->row[i + 1] - A->row[i]) &&
+          (A->row[i + 1] > jx) &&
+          (A->col[jx] == j)) {
         jx++;
       } else {
         tmp = dot_prod(&L[i * nF], &R[j * nF], nF);
@@ -337,15 +339,14 @@ main(int argc, char* argv[])
   MPI_Comm_rank(MPI_COMM_WORLD, &pid);
   MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 
-  if (2 != argc) {
-    MPI_Finalize();
-    die("usage:\n\t%s <input-file>\n", argv[0]);
-  }
-
   if (0 == pid) {
     FILE *fp;
     size_t i, j;
     uint sum, tmp, lst;
+
+    if (2 != argc) {
+      die("usage:\n\t%s <input-file>\n", argv[0]);
+    }
 
     if (NULL == (fp = fopen(argv[1], "r"))) {
       die("main: unable to open file \'%s\'\n", argv[1]);
@@ -358,9 +359,17 @@ main(int argc, char* argv[])
     nI  = parse_uint(fp);
     nnz = parse_uint(fp);
 
-    Al = csr_matrix_init(nU, nnz);
-    Ac = csr_matrix_init(nI, nnz);
+    for (int id = 1; id < nproc; ++id) {
+      MPI_Send(&N, 1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
+      MPI_Send(&a, 1, MPI_DOUBLE, id, TAG, MPI_COMM_WORLD);
+      MPI_Send(&nF, 1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
+      MPI_Send(&nU, 1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
+      MPI_Send(&nI, 1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
+      MPI_Send(&nnz, 1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
+    }
 
+    A  = csr_matrix_init(nU, nnz);
+    At = csr_matrix_init(nI, nnz);
     /*
      * parse matrix A
      * TODO: distribute matrix A
@@ -368,10 +377,10 @@ main(int argc, char* argv[])
     for (uint ij = 0; ij < nnz; ++ij) {
       i = parse_uint(fp);
       j = parse_uint(fp);
-      Al->row[i+1] += 1;
-      Ac->row[j] += 1;
-      Al->col[ij] = j;
-      Al->val[ij] = parse_double(fp);
+      A->row[i+1] += 1;
+      At->row[j] += 1;
+      A->col[ij] = j;
+      A->val[ij] = parse_double(fp);
     }
 
     if (0 != fclose(fp)) {
@@ -379,57 +388,59 @@ main(int argc, char* argv[])
     }
 
     for (i = 1; i <= nU; ++i) {
-      Al->row[i] += Al->row[i - 1];
+      A->row[i] += A->row[i - 1];
     }
 
     /* CSR to CSC */
     for (j = 0, sum = 0; j < nI; ++j) {
-      tmp = Ac->row[j];
-      Ac->row[j] = sum;
+      tmp = At->row[j];
+      At->row[j] = sum;
       sum += tmp;
     }
-    Ac->row[nI] = nnz;
+    At->row[nI] = nnz;
     
     for (i = 0; i < nU; ++i) {
-      for (size_t jx = Al->row[i]; jx < Al->row[i + 1]; ++jx) {
-        uint c = Al->col[jx];
-        uint d = Ac->row[c];
+      for (size_t jx = A->row[i]; jx < A->row[i + 1]; ++jx) {
+        uint c = A->col[jx];
+        uint d = At->row[c];
 
-        Ac->col[d] = i;
-        Ac->val[d] = Al->val[jx];
-        Ac->row[c]++;
+        At->col[d] = i;
+        At->val[d] = A->val[jx];
+        At->row[c]++;
       }
     }
 
     for (j = 0, lst = 0; j <= nI; ++j) {
-      tmp = Ac->row[j];
-      Ac->row[j] = lst;
+      tmp = At->row[j];
+      At->row[j] = lst;
       lst = tmp;
     }
+  } else {
+    MPI_Status status;
+
+    MPI_Recv(&N, 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
+    MPI_Recv(&a, 1, MPI_DOUBLE, 0, TAG, MPI_COMM_WORLD, &status);
+    MPI_Recv(&nF, 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
+    MPI_Recv(&nU, 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
+    MPI_Recv(&nI, 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
+    MPI_Recv(&nnz, 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
+
+    A = csr_matrix_init(nU, nnz);
+    At = csr_matrix_init(nI, nnz);
   }
 
-  /* send parameters to nodes */
-  uint vec[5] = {N, nF, nU, nI, nnz};
-  MPI_Bcast(vec, 5, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
-  MPI_Bcast(&a, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-  N   = vec[0];
-  nF  = vec[1]; 
-  nU  = vec[2];
-  nI  = vec[3]; 
-  nnz = vec[4];
+#if 0
+  printf("{rank=%d}->{N=%u,a=%lf,nF=%u,nU=%u,nI=%u,nnz=%u}\n",
+      pid, N, a, nF, nU, nI, nnz);
+#endif
 
-  if ((NULL == Al) && (NULL == Ac)) {
-    Al = csr_matrix_init(nU, nnz);
-    Ac = csr_matrix_init(nI, nnz);
-  }
+  MPI_Bcast(A->row, nU + 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+  MPI_Bcast(A->col, nnz, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+  MPI_Bcast(A->val, nnz, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
-  MPI_Bcast(Al->row, nU + 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
-  MPI_Bcast(Al->col, nnz, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
-  MPI_Bcast(Al->val, nnz, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-
-  MPI_Bcast(Ac->row, nI + 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
-  MPI_Bcast(Ac->col, nnz, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
-  MPI_Bcast(Ac->val, nnz, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  MPI_Bcast(At->row, nI + 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+  MPI_Bcast(At->col, nnz, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+  MPI_Bcast(At->val, nnz, MPI_DOUBLE, 0, MPI_COMM_WORLD);
   
   L  = matrix_init(nU, nF);
   Lt = matrix_init(nU, nF);
@@ -451,8 +462,8 @@ main(int argc, char* argv[])
   matrix_destroy(&Lt);
   matrix_destroy(&L);
 
-  csr_matrix_destroy(&Al);
-  csr_matrix_destroy(&Ac);
+  csr_matrix_destroy(&A);
+  csr_matrix_destroy(&At);
 
   MPI_Finalize();
   return 0;

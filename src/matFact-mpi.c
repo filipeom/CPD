@@ -334,6 +334,8 @@ solve()
 int
 main(int argc, char* argv[])
 {
+  int start, end;
+
   MPI_Init(&argc, &argv);
 
   MPI_Comm_rank(MPI_COMM_WORLD, &nid);
@@ -415,13 +417,29 @@ main(int argc, char* argv[])
       A->col[ij] = j;
       A->val[ij] = v;
 
-      if (ij == (A->row[((did + 1) * nU / nproc)] - 1)) {
-        printf("id = %d, ij = %lu, row = %u\n", did, ij, A->row[((did + 1) * nU / nproc)]);
+      if (ij == (A->row[((did + 1) * nU / nproc)] - 1) && nproc > 1) {
+#if 0
+        printf("I can now send data to thread %d\n", did);
+        printf("{id=%d} -> {\n", did);
+        int aux = did * nU / nproc;
+        printf("\trow = %u, start = %u\n", aux, A->row[aux]);
+        aux = (did + 1) * nU / nproc;
+        printf("\trow = %u, end = %u\n", aux, A->row[aux]);
+        printf("\ncurrent ij = %lu\n", ij);
+        printf("}\n");
+#endif
+#if 1
+        int low = did * nU / nproc;
+        int high = (did + 1) * nU / nproc;
+        start = A->row[low];
+        end = A->row[high];
+        MPI_Send(&A->col[start], end-start, MPI_UNSIGNED, did, TAG, MPI_COMM_WORLD);
+        MPI_Send(&A->val[start], end-start, MPI_DOUBLE,   did, TAG, MPI_COMM_WORLD);
+#endif
         did++;
       }
     }
 
-    die("");
     if (0 != fclose(fp)) {
       die("main: unable to flush file stream\n");
     }
@@ -471,20 +489,18 @@ main(int argc, char* argv[])
     At = csr_matrix_init(nI, nnz);
 
     MPI_Recv(A->row, nU + 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
-#if 0 // receive slice of A
-    MPI_Recv(A->col, ..., MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
-    MPI_Recv(A->val, ..., MPI_DOUBLE, 0, TAG, MPI_COMM_WORLD, &status);
-#endif
+
+    start = A->row[low_L];
+    end = A->row[high_L];
+
+    MPI_Recv(&A->col[start], end-start, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
+    MPI_Recv(&A->val[start], end-start, MPI_DOUBLE, 0,   TAG, MPI_COMM_WORLD, &status);
   }
 
 #if 0
   printf("{rank=%d}->{N=%u,a=%lf,nF=%u,nU=%u,nI=%u,nnz=%u}\n",
       nid, N, a, nF, nU, nI, nnz);
 #endif
-
-  MPI_Bcast(A->row, nU + 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
-  MPI_Bcast(A->col, nnz, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
-  MPI_Bcast(A->val, nnz, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
   MPI_Bcast(At->row, nI + 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
   MPI_Bcast(At->col, nnz, MPI_UNSIGNED, 0, MPI_COMM_WORLD);

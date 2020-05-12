@@ -19,16 +19,16 @@ struct csr {
 };
 
 /* globals */
-static int pid  = 0;  /* calling process id  */
-static int nproc = 0;  /* number of processes */
+static int nid   = 0;      /* calling node id  */
+static int nproc = 0;      /* number of node */
 
-static uint N   = 0;  /* iteration count */
-static uint nF  = 0;  /* number of feats */
-static uint nU  = 0;  /* number of users */
-static uint nI  = 0;  /* number of items */
-static uint nnz = 0;  /* number of !zero */
+static uint N   = 0;       /* iteration count */
+static uint nF  = 0;       /* number of feats */
+static uint nU  = 0;       /* number of users */
+static uint nI  = 0;       /* number of items */
+static uint nnz = 0;       /* number of !zero */
 
-static double a = 0;  /* alpha constant */
+static double a = 0;       /* alpha constant */
 
 static double *Lt = NULL;  /* users-feats matrix (prev it) */ 
 static double *L  = NULL;  /* users-feats matrix (curr it) */
@@ -202,14 +202,14 @@ solve()
   int cnts_L[nproc], cnts_R[nproc];
   int offs_L[nproc], offs_R[nproc];
   
-  if (0 == pid) {
+  if (0 == nid) {
     best = (uint *) xmalloc(sizeof(uint) * nU);
   }
 
-  low_L   = pid * nU / nproc;
-  low_R   = pid * nI / nproc; 
-  high_L  = (pid + 1) * nU / nproc;
-  high_R  = (pid + 1) * nI / nproc;
+  low_L   = nid * nU / nproc;
+  low_R   = nid * nI / nproc; 
+  high_L  = (nid + 1) * nU / nproc;
+  high_R  = (nid + 1) * nI / nproc;
   chunk_L = (high_L - low_L) * nF;
   chunk_R = (high_R - low_R) * nF;
 
@@ -247,12 +247,12 @@ solve()
     MPI_Allgatherv(
         &L[low_L*nF],     /* src buffer */
         chunk_L,          /* length of data to send */
-        MPI_DOUBLE,
+        MPI_DOUBLE,       /* type of data to send */
         L,                /* recv buffer */
-        cnts_L,           /* buffer with the recvcnt from each proc */
-        offs_L,           /* offset where each proc should write to L */
-        MPI_DOUBLE,
-        MPI_COMM_WORLD    /* group of processes involved in this comm */
+        cnts_L,           /* buffer with the recvcnt from each node */
+        offs_L,           /* offset where each node should write to L */
+        MPI_DOUBLE,       /* type of data to recv */
+        MPI_COMM_WORLD    /* group of nodes involved in this comm */
     );
 
     // Update R
@@ -271,12 +271,12 @@ solve()
     MPI_Allgatherv(
         &R[low_R*nF],     /* src buffer */
         chunk_R,          /* length of data to send */
-        MPI_DOUBLE,
+        MPI_DOUBLE,       /* type of data to send */
         R,                /* recv buffer */
-        cnts_R,           /* buffer with the recvcnt from each proc */
-        offs_R,           /* offset where each proc should write to R */
-        MPI_DOUBLE,
-        MPI_COMM_WORLD    /* group of processes involved in this comm */
+        cnts_R,           /* buffer with the recvcnt from each node */
+        offs_R,           /* offset where each node should write to R */
+        MPI_DOUBLE,       /* type of data to recv */
+        MPI_COMM_WORLD    /* group of nodes involved in this comm */
     );
 
     /* Synchronization necessary before each new iteration */
@@ -310,18 +310,18 @@ solve()
 
 
   MPI_Gatherv(
-      chunk,
-      high_L - low_L,
-      MPI_INT,
-      best,
-      cnts_L,
-      offs_L,
-      MPI_INT,
-      0,
-      MPI_COMM_WORLD
+      chunk,              /* src buffer */
+      high_L - low_L,     /* length of data to send */
+      MPI_INT,            /* type of data to send */
+      best,               /* recv buffer */
+      cnts_L,             /* buffer with the recvcnt from each node */
+      offs_L,             /* offset where root will start writing data from each node to recv buffer */
+      MPI_INT,            /* type of data to recv */
+      0,                  /* root nid */
+      MPI_COMM_WORLD      /* group of nodes involved in this comm */
   );
 
-  if (0 == pid) {
+  if (0 == nid) {
     for (i = 0; i < nU; ++i) printf("%u\n", best[i]);
     free(best);
     best = NULL;
@@ -336,10 +336,10 @@ main(int argc, char* argv[])
 {
   MPI_Init(&argc, &argv);
 
-  MPI_Comm_rank(MPI_COMM_WORLD, &pid);
+  MPI_Comm_rank(MPI_COMM_WORLD, &nid);
   MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 
-  if (0 == pid) {
+  if (0 == nid) {
     FILE *fp;
     size_t i, j;
     uint sum, tmp, lst;
@@ -361,13 +361,13 @@ main(int argc, char* argv[])
     nI  = parse_uint(fp);
     nnz = parse_uint(fp);
 
-    /* send parameters to threads */
+    /* send parameters to all nodes */
     for (int id = 1; id < nproc; ++id) {
-      MPI_Send(&N, 1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
-      MPI_Send(&a, 1, MPI_DOUBLE, id, TAG, MPI_COMM_WORLD);
-      MPI_Send(&nF, 1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
-      MPI_Send(&nU, 1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
-      MPI_Send(&nI, 1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
+      MPI_Send(&N,   1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
+      MPI_Send(&a,   1, MPI_DOUBLE,   id, TAG, MPI_COMM_WORLD);
+      MPI_Send(&nF,  1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
+      MPI_Send(&nU,  1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
+      MPI_Send(&nI,  1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
       MPI_Send(&nnz, 1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
     }
 
@@ -390,6 +390,7 @@ main(int argc, char* argv[])
       A->row[i] += A->row[i - 1];
     }
 
+    /* send nnz offsets to all nodes */
     for (int id = 1; id < nproc; ++id) {
       MPI_Send(A->row, nU+1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
     }
@@ -440,14 +441,14 @@ main(int argc, char* argv[])
   } else {
     MPI_Status status;
 
-    MPI_Recv(&N, 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
-    MPI_Recv(&a, 1, MPI_DOUBLE, 0, TAG, MPI_COMM_WORLD, &status);
-    MPI_Recv(&nF, 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
-    MPI_Recv(&nU, 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
-    MPI_Recv(&nI, 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
+    MPI_Recv(&N,   1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
+    MPI_Recv(&a,   1, MPI_DOUBLE,   0, TAG, MPI_COMM_WORLD, &status);
+    MPI_Recv(&nF,  1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
+    MPI_Recv(&nU,  1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
+    MPI_Recv(&nI,  1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
     MPI_Recv(&nnz, 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
 
-    A = csr_matrix_init(nU, nnz);
+    A  = csr_matrix_init(nU, nnz);
     At = csr_matrix_init(nI, nnz);
 
     MPI_Recv(A->row, nU + 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
@@ -459,7 +460,7 @@ main(int argc, char* argv[])
 
 #if 0
   printf("{rank=%d}->{N=%u,a=%lf,nF=%u,nU=%u,nI=%u,nnz=%u}\n",
-      pid, N, a, nF, nU, nI, nnz);
+      nid, N, a, nF, nU, nI, nnz);
 #endif
 
   MPI_Bcast(A->row, nU + 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
@@ -483,7 +484,7 @@ main(int argc, char* argv[])
   secs += MPI_Wtime();
   
   // Redirect stdout to file and get time on stderr
-  if (0 == pid) fprintf(stderr, "Time = %12.6f sec\n", secs);
+  if (0 == nid) fprintf(stderr, "Time = %12.6f sec\n", secs);
 
   matrix_destroy(&Rt);
   matrix_destroy(&R);

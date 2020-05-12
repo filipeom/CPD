@@ -30,6 +30,11 @@ static uint nnz = 0;       /* number of !zero */
 
 static double a = 0;       /* alpha constant */
 
+static uint low_L  = 0;
+static uint low_R  = 0;
+static uint high_L = 0;
+static uint high_R = 0;
+
 static double *Lt = NULL;  /* users-feats matrix (prev it) */ 
 static double *L  = NULL;  /* users-feats matrix (curr it) */
 static double *Rt = NULL;  /* feats-items matrix (prev it) */
@@ -196,8 +201,7 @@ solve()
   size_t i, j, k, jx, ix;
   double tmp, max;
   double *m, *mt;
-  int low, low_L, low_R;
-  int high, high_L, high_R;
+  int low, high;
   int chunk_L, chunk_R;
   int cnts_L[nproc], cnts_R[nproc];
   int offs_L[nproc], offs_R[nproc];
@@ -206,10 +210,6 @@ solve()
     best = (uint *) xmalloc(sizeof(uint) * nU);
   }
 
-  low_L   = nid * nU / nproc;
-  low_R   = nid * nI / nproc; 
-  high_L  = (nid + 1) * nU / nproc;
-  high_R  = (nid + 1) * nI / nproc;
   chunk_L = (high_L - low_L) * nF;
   chunk_R = (high_R - low_R) * nF;
 
@@ -361,6 +361,12 @@ main(int argc, char* argv[])
     nI  = parse_uint(fp);
     nnz = parse_uint(fp);
 
+    /* root's slice */
+    low_L   = nid * nU / nproc;
+    low_R   = nid * nI / nproc; 
+    high_L  = (nid + 1) * nU / nproc;
+    high_R  = (nid + 1) * nI / nproc;
+
     /* send parameters to all nodes */
     for (int id = 1; id < nproc; ++id) {
       MPI_Send(&N,   1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
@@ -400,6 +406,7 @@ main(int argc, char* argv[])
     /* set to start of nnz entries */
     fseek(fp, curr, SEEK_SET);
 
+    int did = 1;
     for (size_t ij = 0; ij < nnz; ++ij) {
       i = parse_uint(fp); /* dummy parse */
       j = parse_uint(fp);
@@ -407,8 +414,14 @@ main(int argc, char* argv[])
 
       A->col[ij] = j;
       A->val[ij] = v;
+
+      if (ij == (A->row[((did + 1) * nU / nproc)] - 1)) {
+        printf("id = %d, ij = %lu, row = %u\n", did, ij, A->row[((did + 1) * nU / nproc)]);
+        did++;
+      }
     }
 
+    die("");
     if (0 != fclose(fp)) {
       die("main: unable to flush file stream\n");
     }
@@ -447,6 +460,12 @@ main(int argc, char* argv[])
     MPI_Recv(&nU,  1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
     MPI_Recv(&nI,  1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
     MPI_Recv(&nnz, 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
+
+    /* node's slice */
+    low_L   = nid * nU / nproc;
+    low_R   = nid * nI / nproc; 
+    high_L  = (nid + 1) * nU / nproc;
+    high_R  = (nid + 1) * nI / nproc;
 
     A  = csr_matrix_init(nU, nnz);
     At = csr_matrix_init(nI, nnz);

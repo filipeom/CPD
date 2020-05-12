@@ -343,6 +343,7 @@ main(int argc, char* argv[])
     FILE *fp;
     size_t i, j;
     uint sum, tmp, lst;
+    double v;
 
     if (2 != argc) {
       die("usage:\n\t%s <input-file>\n", argv[0]);
@@ -352,6 +353,7 @@ main(int argc, char* argv[])
       die("main: unable to open file \'%s\'\n", argv[1]);
     }
     
+    /* parse parameters */
     N   = parse_uint(fp);
     a   = parse_double(fp);
     nF  = parse_uint(fp);
@@ -359,6 +361,7 @@ main(int argc, char* argv[])
     nI  = parse_uint(fp);
     nnz = parse_uint(fp);
 
+    /* send parameters to threads */
     for (int id = 1; id < nproc; ++id) {
       MPI_Send(&N, 1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
       MPI_Send(&a, 1, MPI_DOUBLE, id, TAG, MPI_COMM_WORLD);
@@ -370,25 +373,43 @@ main(int argc, char* argv[])
 
     A  = csr_matrix_init(nU, nnz);
     At = csr_matrix_init(nI, nnz);
-    /*
-     * parse matrix A
-     * TODO: distribute matrix A
-     */
-    for (uint ij = 0; ij < nnz; ++ij) {
+
+    /* get current file ptr pos */
+    long curr = ftell(fp);
+
+    for (size_t ij = 0; ij < nnz; ++ij) {
       i = parse_uint(fp);
       j = parse_uint(fp);
-      A->row[i+1] += 1;
+      v = parse_double(fp); /* dummy parse */
+
+      A->row[i + 1] += 1;
       At->row[j] += 1;
+    }
+    
+    for (i = 1; i <= nU; ++i) {
+      A->row[i] += A->row[i - 1];
+    }
+
+    for (int id = 1; id < nproc; ++id) {
+      MPI_Send(A->row, nU+1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
+    }
+
+    /* rewind to start of file */
+    rewind(fp);
+    /* set to start of nnz entries */
+    fseek(fp, curr, SEEK_SET);
+
+    for (size_t ij = 0; ij < nnz; ++ij) {
+      i = parse_uint(fp); /* dummy parse */
+      j = parse_uint(fp);
+      v = parse_double(fp);
+
       A->col[ij] = j;
-      A->val[ij] = parse_double(fp);
+      A->val[ij] = v;
     }
 
     if (0 != fclose(fp)) {
       die("main: unable to flush file stream\n");
-    }
-
-    for (i = 1; i <= nU; ++i) {
-      A->row[i] += A->row[i - 1];
     }
 
     /* CSR to CSC */
@@ -399,14 +420,15 @@ main(int argc, char* argv[])
     }
     At->row[nI] = nnz;
     
+    uint col, dst;
     for (i = 0; i < nU; ++i) {
       for (size_t jx = A->row[i]; jx < A->row[i + 1]; ++jx) {
-        uint c = A->col[jx];
-        uint d = At->row[c];
+        col = A->col[jx];
+        dst = At->row[col];
 
-        At->col[d] = i;
-        At->val[d] = A->val[jx];
-        At->row[c]++;
+        At->col[dst] = i;
+        At->val[dst] = A->val[jx];
+        At->row[col]++;
       }
     }
 
@@ -427,6 +449,12 @@ main(int argc, char* argv[])
 
     A = csr_matrix_init(nU, nnz);
     At = csr_matrix_init(nI, nnz);
+
+    MPI_Recv(A->row, nU + 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
+#if 0 // receive slice of A
+    MPI_Recv(A->col, ..., MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
+    MPI_Recv(A->val, ..., MPI_DOUBLE, 0, TAG, MPI_COMM_WORLD, &status);
+#endif
   }
 
 #if 0

@@ -234,6 +234,7 @@ solve()
     /* TODO: Reduce over lines on L */
     /* TODO: Reduce over columns on R */
 
+#if 0
     MPI_Allgatherv(
         &L[low_L*nF],     /* src buffer */
         chunk_L,          /* length of data to send */
@@ -255,11 +256,13 @@ solve()
         MPI_DOUBLE,       /* type of data to recv */
         MPI_COMM_WORLD    /* group of nodes involved in this comm */
     );
+#endif 
 
     /* Synchronization necessary before each new iteration */
     MPI_Barrier(MPI_COMM_WORLD);
   } /* end while */
 
+#if 0
   for (i = low_L, ix = 0; i < high_L; ++i, ++ix) {
     max = 0;
     jx = A->row[i];
@@ -297,6 +300,7 @@ solve()
       0,                  /* root nid */
       MPI_COMM_WORLD      /* group of nodes involved in this comm */
   );
+#endif
 
   if (0 == nid) {
     for (i = 0; i < nU; ++i) printf("%u\n", best[i]);

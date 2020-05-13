@@ -130,18 +130,18 @@ matrix_print(const double matrix[], const uint l, const uint c)
 }
 
 struct csr *
-csr_matrix_init(uint nrows, uint nnz)
+csr_matrix_init(uint nnz)
 {
   struct csr *matrix;
 
-  matrix = (struct csr *) xmalloc(sizeof(struct csr));
+  matrix = (struct csr *)  xmalloc(sizeof(struct csr));
 
-  matrix->row = (uint *) xmalloc(sizeof(uint) * (nrows + 1));
-  matrix->col = (uint *) xmalloc(sizeof(uint) * nnz);
+  matrix->row = (uint *)   xmalloc(sizeof(uint)   * nnz);
+  matrix->col = (uint *)   xmalloc(sizeof(uint)   * nnz);
   matrix->val = (double *) xmalloc(sizeof(double) * nnz);
 
-  memset(matrix->row, '\x00', sizeof(uint) * (nrows + 1));
-  memset(matrix->col, '\x00', sizeof(uint) * nnz);
+  memset(matrix->row, '\x00', sizeof(uint)   * nnz);
+  memset(matrix->col, '\x00', sizeof(uint)   * nnz);
   memset(matrix->val, '\x00', sizeof(double) * nnz);
 
   return matrix;
@@ -336,20 +336,40 @@ solve()
 int
 main(int argc, char* argv[])
 {
-  int start, end;
+  MPI_Comm row_comm;
 
   MPI_Init(&argc, &argv);
 
   MPI_Comm_rank(MPI_COMM_WORLD, &nid);
   MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 
-  /* must be a perfect square for this */
+  /* must be a perfect square for this to work for now */
   p = sqrt(nproc);
+
+  int color = nid / p;
+  MPI_Comm_split(MPI_COMM_WORLD, color, nid, &row_comm);
+
+  int row_nid, row_nproc;
+  MPI_Comm_rank(row_comm, &row_nid);
+  MPI_Comm_size(row_comm, &row_nproc);
+
+  int cnt[p][row_nproc];
+
+  for (int i = 0; i < p; ++i) {
+    for (int j = 0; j < row_nproc; ++j) {
+      cnt[i][j] = 0;
+    }
+  }
+
+  /* TODO: column_comm */
+#if 0 /* Debug stmt */
+  printf("WORLD RANK/SIZE: %d/%d \t ROW RANK/SIZE: %d/%d\n",
+          nid, nproc, row_nid, row_nproc);
+#endif
 
   if (0 == nid) {
     FILE *fp;
     size_t i, j;
-    uint sum, tmp, lst;
     double v;
 
     if (2 != argc) {
@@ -384,96 +404,20 @@ main(int argc, char* argv[])
       MPI_Send(&nnz, 1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
     }
 
-    A  = csr_matrix_init(nU, nnz);
-    At = csr_matrix_init(nI, nnz);
-
-    /* get current file ptr pos */
-    long curr = ftell(fp);
-
     for (size_t ij = 0; ij < nnz; ++ij) {
       i = parse_uint(fp);
       j = parse_uint(fp);
       v = parse_double(fp); /* dummy parse */
 
-      A->row[i + 1] += 1;
-      At->row[j] += 1;
-    }
-    
-    for (i = 1; i <= nU; ++i) {
-      A->row[i] += A->row[i - 1];
-    }
-
-    /* send nnz offsets to all nodes */
-    for (int id = 1; id < nproc; ++id) {
-      MPI_Send(A->row, nU+1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
-    }
-
-    /* rewind to start of file */
-    rewind(fp);
-    /* set to start of nnz entries */
-    fseek(fp, curr, SEEK_SET);
-
-    int did = 1;
-    for (size_t ij = 0; ij < nnz; ++ij) {
-      i = parse_uint(fp); /* dummy parse */
-      j = parse_uint(fp);
-      v = parse_double(fp);
-
+      A->row[ij] = i;
       A->col[ij] = j;
       A->val[ij] = v;
-
-      if (ij == (A->row[((did + 1) * nU / nproc)] - 1) && nproc > 1) {
-#if 0
-        printf("I can now send data to thread %d\n", did);
-        printf("{id=%d} -> {\n", did);
-        int aux = did * nU / nproc;
-        printf("\trow = %u, start = %u\n", aux, A->row[aux]);
-        aux = (did + 1) * nU / nproc;
-        printf("\trow = %u, end = %u\n", aux, A->row[aux]);
-        printf("\ncurrent ij = %lu\n", ij);
-        printf("}\n");
-#endif
-#if 1
-        int low = did * nU / nproc;
-        int high = (did + 1) * nU / nproc;
-        start = A->row[low];
-        end = A->row[high];
-        MPI_Send(&A->col[start], end-start, MPI_UNSIGNED, did, TAG, MPI_COMM_WORLD);
-        MPI_Send(&A->val[start], end-start, MPI_DOUBLE,   did, TAG, MPI_COMM_WORLD);
-#endif
-        did++;
-      }
     }
-
+    
     if (0 != fclose(fp)) {
       die("main: unable to flush file stream\n");
     }
 
-    /* CSR to CSC */
-    for (j = 0, sum = 0; j < nI; ++j) {
-      tmp = At->row[j];
-      At->row[j] = sum;
-      sum += tmp;
-    }
-    At->row[nI] = nnz;
-    
-    uint col, dst;
-    for (i = 0; i < nU; ++i) {
-      for (size_t jx = A->row[i]; jx < A->row[i + 1]; ++jx) {
-        col = A->col[jx];
-        dst = At->row[col];
-
-        At->col[dst] = i;
-        At->val[dst] = A->val[jx];
-        At->row[col]++;
-      }
-    }
-
-    for (j = 0, lst = 0; j <= nI; ++j) {
-      tmp = At->row[j];
-      At->row[j] = lst;
-      lst = tmp;
-    }
   } else {
     MPI_Status status;
 
@@ -490,16 +434,6 @@ main(int argc, char* argv[])
     high_L  = (nid + 1) * nU / nproc;
     high_R  = (nid + 1) * nI / nproc;
 
-    A  = csr_matrix_init(nU, nnz);
-    At = csr_matrix_init(nI, nnz);
-
-    MPI_Recv(A->row, nU + 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
-
-    start = A->row[low_L];
-    end = A->row[high_L];
-
-    MPI_Recv(&A->col[start], end-start, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
-    MPI_Recv(&A->val[start], end-start, MPI_DOUBLE, 0,   TAG, MPI_COMM_WORLD, &status);
   }
 
 #if 0
@@ -507,20 +441,17 @@ main(int argc, char* argv[])
       nid, N, a, nF, nU, nI, nnz);
 #endif
 
-  MPI_Bcast(At->row, nI + 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
-  MPI_Bcast(At->col, nnz, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
-  MPI_Bcast(At->val, nnz, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-  
   L  = matrix_init(nU, nF);
   Lt = matrix_init(nU, nF);
   R  = matrix_init(nI, nF);
   Rt = matrix_init(nI, nF);
 
+  /* where should this be executed? */
   random_fill_LR();
 
   double secs;
   secs = - MPI_Wtime();
-  solve();
+  // solve();
   secs += MPI_Wtime();
   
   // Redirect stdout to file and get time on stderr
@@ -533,6 +464,8 @@ main(int argc, char* argv[])
 
   csr_matrix_destroy(&A);
   csr_matrix_destroy(&At);
+
+  MPI_Comm_free(&row_comm);
 
   MPI_Finalize();
   return 0;

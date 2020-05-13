@@ -11,7 +11,7 @@ CFLAGS=-g -Wall -std=gnu11 -O0
 
 $(TARGET): $(OBJECTS)
 	@echo "Linking...";
-	@echo "$(CC) $^ -o $(TARGET)"; $(CC) $^ -o $(TARGET)
+	@echo "$(CC) $^ -o $(TARGET)"; $(CC) $^ -o $(TARGET) -lm
 
 $(BUILDDIR)/%.o: $(SRCDIR)/%.$(SRCEXT)
 	@mkdir -p $(BUILDDIR)

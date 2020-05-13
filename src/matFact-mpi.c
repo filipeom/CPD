@@ -336,6 +336,7 @@ solve()
 int
 main(int argc, char* argv[])
 {
+  // XXX: REFACTOR
   MPI_Comm row_comm;
 
   MPI_Init(&argc, &argv);
@@ -343,24 +344,31 @@ main(int argc, char* argv[])
   MPI_Comm_rank(MPI_COMM_WORLD, &nid);
   MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 
+  // XXX: REFACTOR
   /* must be a perfect square for this to work for now */
   p = sqrt(nproc);
 
+  // XXX: REFACTOR
   int color = nid / p;
   MPI_Comm_split(MPI_COMM_WORLD, color, nid, &row_comm);
 
+  // XXX: REFACTOR
   int row_nid, row_nproc;
   MPI_Comm_rank(row_comm, &row_nid);
   MPI_Comm_size(row_comm, &row_nproc);
 
+  // XXX: REFACTOR
+#if 1 // AUX VECTOR CNTS
   int cnt[p][row_nproc];
-
   for (int i = 0; i < p; ++i) {
     for (int j = 0; j < row_nproc; ++j) {
       cnt[i][j] = 0;
     }
   }
 
+#endif // AUX VECTOR CNTS
+
+  // XXX: REFACTOR
   /* TODO: column_comm */
 #if 0 /* Debug stmt */
   printf("WORLD RANK/SIZE: %d/%d \t ROW RANK/SIZE: %d/%d\n",
@@ -388,12 +396,6 @@ main(int argc, char* argv[])
     nI  = parse_uint(fp);
     nnz = parse_uint(fp);
 
-    /* root's slice */
-    low_L   = nid * nU / nproc;
-    low_R   = nid * nI / nproc; 
-    high_L  = (nid + 1) * nU / nproc;
-    high_R  = (nid + 1) * nI / nproc;
-
     /* send parameters to all nodes */
     for (int id = 1; id < nproc; ++id) {
       MPI_Send(&N,   1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
@@ -404,15 +406,41 @@ main(int argc, char* argv[])
       MPI_Send(&nnz, 1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
     }
 
+    int row_cnts[p + 1];
+    for (i = 0; i <= p; ++i) {
+      row_cnts[i] = i * nU / p;
+    }
+
+    int col_cnts[row_nproc + 1];
+    for (i = 0; i <= row_nproc; ++i) {
+      col_cnts[i] = i * nI / p;
+    }
+
+    int x = 0, y = 0, prev = 0;
     for (size_t ij = 0; ij < nnz; ++ij) {
       i = parse_uint(fp);
       j = parse_uint(fp);
       v = parse_double(fp); /* dummy parse */
 
+      if (i >= row_cnts[x]) x++;
+      if ((j >= col_cnts[y])) y++;
+      else if (j < prev) y = 0;
+
+      cnt[x][y]++;
+
       A->row[ij] = i;
       A->col[ij] = j;
       A->val[ij] = v;
+      prev = j;
     }
+
+    for (i = 0; i < p; ++i) {
+      for (j = 0; j < row_nproc; ++j) {
+        printf("(%lu, %lu) has %d nnz's\n", i, j, cnt[i][j]);
+      }
+    }
+    
+    die("");
     
     if (0 != fclose(fp)) {
       die("main: unable to flush file stream\n");
@@ -428,23 +456,25 @@ main(int argc, char* argv[])
     MPI_Recv(&nI,  1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
     MPI_Recv(&nnz, 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
 
+    // this has to be removed.
     /* node's slice */
     low_L   = nid * nU / nproc;
     low_R   = nid * nI / nproc; 
     high_L  = (nid + 1) * nU / nproc;
     high_R  = (nid + 1) * nI / nproc;
 
+    /* receive nnzs */
   }
 
 #if 0
   printf("{rank=%d}->{N=%u,a=%lf,nF=%u,nU=%u,nI=%u,nnz=%u}\n",
       nid, N, a, nF, nU, nI, nnz);
-#endif
 
   L  = matrix_init(nU, nF);
   Lt = matrix_init(nU, nF);
   R  = matrix_init(nI, nF);
   Rt = matrix_init(nI, nF);
+#endif
 
   /* where should this be executed? */
   random_fill_LR();
@@ -457,10 +487,12 @@ main(int argc, char* argv[])
   // Redirect stdout to file and get time on stderr
   if (0 == nid) fprintf(stderr, "Time = %12.6f sec\n", secs);
 
+#if 0
   matrix_destroy(&Rt);
   matrix_destroy(&R);
   matrix_destroy(&Lt);
   matrix_destroy(&L);
+#endif
 
   csr_matrix_destroy(&A);
   csr_matrix_destroy(&At);

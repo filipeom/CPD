@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include <mpi.h>
+#include <math.h>
 
 #define TAG    0x42
 #define DEBUG  0
@@ -19,6 +20,7 @@ struct csr {
 };
 
 /* globals */
+static int p     = 0;
 static int nid   = 0;      /* calling node id  */
 static int nproc = 0;      /* number of node */
 
@@ -340,6 +342,9 @@ main(int argc, char* argv[])
 
   MPI_Comm_rank(MPI_COMM_WORLD, &nid);
   MPI_Comm_size(MPI_COMM_WORLD, &nproc);
+
+  /* must be a perfect square for this */
+  p = sqrt(nproc);
 
   if (0 == nid) {
     FILE *fp;

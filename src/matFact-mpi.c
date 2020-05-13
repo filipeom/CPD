@@ -45,6 +45,8 @@ static double *R  = NULL;  /* feats-items matrix (curr it) */
 static struct csr *A  = NULL;
 static struct csr *At = NULL;
 
+static MPI_Comm row_comm;
+
 /* general helpers */
 void
 die(const char *err_str, ...)
@@ -200,7 +202,7 @@ void
 solve()
 {
   uint *best, *chunk;
-  size_t i, j, k, jx, ix;
+  size_t i, j, k, ij;
   double tmp, max;
   double *m, *mt;
   int low, high;
@@ -212,39 +214,25 @@ solve()
     best = (uint *) xmalloc(sizeof(uint) * nU);
   }
 
-  chunk_L = (high_L - low_L) * nF;
-  chunk_R = (high_R - low_R) * nF;
-
   chunk = (uint *) xmalloc(sizeof(uint) * (high_L - low_L));
-
-  for (i = 0; i < nproc; ++i) {
-    low       = i * nU / nproc;
-    high      = (i + 1) * nU / nproc;
-    cnts_L[i] = (high - low) * nF;
-    offs_L[i] = low * nF;
-    
-    low       = i * nI / nproc;
-    high      = (i + 1) * nI / nproc;
-    cnts_R[i] = (high - low) * nF;
-    offs_R[i] = low * nF;
-  }
 
   while (N--) {
     memcpy(Rt, R, sizeof(double) * nI * nF);
     memcpy(Lt, L, sizeof(double) * nU * nF);
 
-    // Update L
-    for (i = low_L; i < high_L; ++i) {
-      m = &L[i * nF];
-      for (jx = A->row[i]; jx < A->row[i + 1]; jx++) {
-        j = A->col[jx];
-        mt = &Rt[j * nF];
-        tmp = dot_prod(&Lt[i*nF], mt, nF);
-        tmp = a * 2 * (A->val[jx] - tmp);
-        for (k = 0; k < nF; ++k)
-          m[k] += tmp * mt[k];
+    for (ij = 0; ij < nnz; ++ij) {
+      i = A->row[ij];
+      j = A->col[ij];
+      tmp = dot_prod(&Lt[i * nF], &Rt[j * nF], nF);
+      tmp = a * 2 * (A->val[ij] - tmp);
+      for (k = 0; k < nF; ++k) {
+        L[i * nF + k] += tmp * Rt[j * nF + k];
+        R[j * nF + k] += tmp * Lt[i * nF + k];
       }
     }
+    
+    /* TODO: Reduce over lines on L */
+    /* TODO: Reduce over columns on R */
 
     MPI_Allgatherv(
         &L[low_L*nF],     /* src buffer */
@@ -256,19 +244,6 @@ solve()
         MPI_DOUBLE,       /* type of data to recv */
         MPI_COMM_WORLD    /* group of nodes involved in this comm */
     );
-
-    // Update R
-    for (j = low_R; j < high_R; ++j) {
-      m = &R[j * nF];
-      for (ix = At->row[j]; ix < At->row[j + 1]; ix++) {
-        i = At->col[ix];
-        mt = &Lt[i * nF];
-        tmp = dot_prod(mt, &Rt[j*nF], nF);
-        tmp = a * 2 * (At->val[ix] - tmp);
-        for (k = 0; k < nF; ++k)
-          m[k] += tmp * mt[k];
-      }
-    }
 
     MPI_Allgatherv(
         &R[low_R*nF],     /* src buffer */
@@ -346,16 +321,12 @@ get_idx(uint x, uint vsize, int psize)
 int
 main(int argc, char* argv[])
 {
-  // XXX: REFACTOR
-  MPI_Comm row_comm;
-
   MPI_Init(&argc, &argv);
 
   MPI_Comm_rank(MPI_COMM_WORLD, &nid);
   MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 
   // XXX: REFACTOR
-  /* must be a perfect square for this to work for now */
   p = sqrt(nproc);
 
   // XXX: REFACTOR
@@ -367,22 +338,12 @@ main(int argc, char* argv[])
   MPI_Comm_rank(row_comm, &row_nid);
   MPI_Comm_size(row_comm, &row_nproc);
 
-  // XXX: REFACTOR
-#if 1 // AUX VECTOR CNTS
   int cnt[p][row_nproc];
   for (int i = 0; i < p; ++i) {
     for (int j = 0; j < row_nproc; ++j) {
       cnt[i][j] = 0;
     }
   }
-#endif // AUX VECTOR CNTS
-
-  // XXX: REFACTOR
-  /* TODO: column_comm */
-#if 0 /* Debug stmt */
-  printf("WORLD RANK/SIZE: %d/%d \t ROW RANK/SIZE: %d/%d\n",
-          nid, nproc, row_nid, row_nproc);
-#endif
 
   if (0 == nid) {
     FILE *fp;
@@ -449,7 +410,7 @@ main(int argc, char* argv[])
       x = get_idx(i, nU, p);
       y = get_idx(j, nI, row_nproc);
 
-      if ((x == 0) && (y == 0)) {
+      if ((0 == x) && (0 == y)) {
         A->row[ex] = i;
         A->col[ex] = j;
         A->val[ex] = v;
@@ -478,7 +439,6 @@ main(int argc, char* argv[])
     MPI_Recv(&nnz, 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
 
     A = csr_matrix_init(nnz);
-    /* receive nnzs */
     
     for (int i = 0; i < nnz; ++i) {
       MPI_Recv(&A->row[i], 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
@@ -487,22 +447,17 @@ main(int argc, char* argv[])
     }
   }
 
-#if 0
-  printf("{rank=%d}->{N=%u,a=%lf,nF=%u,nU=%u,nI=%u,nnz=%u}\n",
-      nid, N, a, nF, nU, nI, nnz);
-#endif
-
   L  = matrix_init(nU, nF);
   Lt = matrix_init(nU, nF);
   R  = matrix_init(nI, nF);
   Rt = matrix_init(nI, nF);
 
   /* where should this be executed? */
-  //random_fill_LR();
+  random_fill_LR();
 
   double secs;
   secs = - MPI_Wtime();
-  // solve();
+  solve();
   secs += MPI_Wtime();
   
   // Redirect stdout to file and get time on stderr
@@ -516,7 +471,6 @@ main(int argc, char* argv[])
   csr_matrix_destroy(&A);
 
   MPI_Comm_free(&row_comm);
-
   MPI_Finalize();
   return 0;
 }

@@ -336,6 +336,7 @@ solve()
 int
 main(int argc, char* argv[])
 {
+  int my_nnz;
   // XXX: REFACTOR
   MPI_Comm row_comm;
 
@@ -406,15 +407,21 @@ main(int argc, char* argv[])
       MPI_Send(&nnz, 1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
     }
 
+    A = csr_matrix_init(nnz);
+
     int row_cnts[p + 1];
     for (i = 0; i <= p; ++i) {
       row_cnts[i] = i * nU / p;
+      printf("%d\n", row_cnts[i]);
     }
 
     int col_cnts[row_nproc + 1];
     for (i = 0; i <= row_nproc; ++i) {
       col_cnts[i] = i * nI / p;
+      printf("%d\n", col_cnts[i]);
     }
+
+    long curr = ftell(fp);
 
     int x = 0, y = 0, prev = 0;
     for (size_t ij = 0; ij < nnz; ++ij) {
@@ -422,31 +429,62 @@ main(int argc, char* argv[])
       j = parse_uint(fp);
       v = parse_double(fp); /* dummy parse */
 
-      if (i >= row_cnts[x]) x++;
-      if ((j >= col_cnts[y])) y++;
+      if (i >= row_cnts[x + 1]) x++;
+      if (j >= col_cnts[y + 1]) y++;
       else if (j < prev) y = 0;
 
       cnt[x][y]++;
-
-      A->row[ij] = i;
-      A->col[ij] = j;
-      A->val[ij] = v;
       prev = j;
     }
 
     for (i = 0; i < p; ++i) {
       for (j = 0; j < row_nproc; ++j) {
         printf("(%lu, %lu) has %d nnz's\n", i, j, cnt[i][j]);
+        if ((i == 0) && (j == 0))  continue;
+        MPI_Send(&cnt[i][j], 1, MPI_INT, i*p+j, TAG, MPI_COMM_WORLD);
       }
     }
-    
-    die("");
-    
+
+    rewind(fp);
+    fseek(fp, curr, SEEK_SET);
+
+    int ex = 0;
+    x = 0, y = 0, prev = 0;
+    for (size_t ij = 0; ij < nnz; ++ij) {
+      i = parse_uint(fp);
+      j = parse_uint(fp);
+      v = parse_double(fp);
+
+
+      if (i >= row_cnts[x + 1]) x++;
+      if (j >= col_cnts[y + 1]) y++;
+      else if (j < prev) y = 0;
+
+      if ((x == 0) && (y == 0)) {
+        A->row[ex] = i;
+        A->col[ex] = j;
+        A->val[ex] = v;
+        ex++;
+      } else {
+        MPI_Send(&i, 1, MPI_UNSIGNED, x*p+y, TAG, MPI_COMM_WORLD);
+        MPI_Send(&j, 1, MPI_UNSIGNED, x*p+y, TAG, MPI_COMM_WORLD);
+        MPI_Send(&v, 1, MPI_DOUBLE,   x*p+y, TAG, MPI_COMM_WORLD);
+      }
+
+      prev = j;
+    }
+
+    printf("{nid = %d} -> {\n", nid);
+    for (int i = 0; i < cnt[0][0]; ++i) {
+      printf("\t(i=%u,j=%u,v=%lf)\n", A->row[i], A->col[i], A->val[i]);  
+    }
+    printf("}\n");   
+
     if (0 != fclose(fp)) {
       die("main: unable to flush file stream\n");
     }
 
-  } else {
+  } else { /* 0 != nid */
     MPI_Status status;
 
     MPI_Recv(&N,   1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
@@ -456,6 +494,7 @@ main(int argc, char* argv[])
     MPI_Recv(&nI,  1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
     MPI_Recv(&nnz, 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
 
+
     // this has to be removed.
     /* node's slice */
     low_L   = nid * nU / nproc;
@@ -463,7 +502,22 @@ main(int argc, char* argv[])
     high_L  = (nid + 1) * nU / nproc;
     high_R  = (nid + 1) * nI / nproc;
 
+    MPI_Recv(&my_nnz, 1, MPI_INT, 0, TAG, MPI_COMM_WORLD, &status);
+    printf("nid = %d, my_nnz = %d\n", nid, my_nnz);
+
+    A = csr_matrix_init(my_nnz);
     /* receive nnzs */
+    
+    for (int i = 0; i < my_nnz; ++i) {
+      MPI_Recv(&A->row[i], 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
+      MPI_Recv(&A->col[i], 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
+      MPI_Recv(&A->val[i], 1, MPI_DOUBLE,   0, TAG, MPI_COMM_WORLD, &status);
+    }
+    printf("{nid = %d} -> {\n", nid);
+    for (int i = 0; i < my_nnz; ++i) {
+      printf("\t(i=%u,j=%u,v=%lf)\n", A->row[i], A->col[i], A->val[i]);  
+    }
+    printf("}\n");
   }
 
 #if 0
@@ -477,7 +531,7 @@ main(int argc, char* argv[])
 #endif
 
   /* where should this be executed? */
-  random_fill_LR();
+  //random_fill_LR();
 
   double secs;
   secs = - MPI_Wtime();
@@ -495,7 +549,6 @@ main(int argc, char* argv[])
 #endif
 
   csr_matrix_destroy(&A);
-  csr_matrix_destroy(&At);
 
   MPI_Comm_free(&row_comm);
 

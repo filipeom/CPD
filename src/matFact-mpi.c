@@ -510,7 +510,7 @@ main(int argc, char* argv[])
 
   double secs;
   secs = - MPI_Wtime();
-  solve();
+  //solve();
   secs += MPI_Wtime();
   
   // Redirect stdout to file and get time on stderr

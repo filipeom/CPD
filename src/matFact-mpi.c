@@ -300,7 +300,7 @@ solve()
   } /* end while */
 
   for (i = 0; i < my_nU; ++i) {
-    for (j = 0; j < my_nI; ++i) {
+    for (j = 0; j < my_nI; ++j) {
       B[i * my_nI + j] = dot_prod(&Lt[i * nF], &Rt[j * nF], nF);
     }
   }
@@ -312,7 +312,7 @@ solve()
 
   for (i = 0; i < my_nU; ++i) {
     my_max[i] = 0;
-    for (j = 0; j < my_nI; ++i) {
+    for (j = 0; j < my_nI; ++j) {
       tmp = B[i * my_nI + j];
       if (tmp > my_max[i]) {
         my_max[i] = tmp;
@@ -341,10 +341,16 @@ solve()
   }
 
   if (0 == nid) {
-    for (i = 0; i < my_nU; ++i) {
-      printf("%u\n", my_idx[i]);
+    MPI_Status status;
+    for (i = 0; i < my_nU; ++i) { printf("%u\n", my_idx[i]); }
+    for (i = 1; i < col_nproc; ++i) {
+      tmp = ((i + 1) * nU / row_nproc) - (i * nU / row_nproc);
+      MPI_Recv(best, tmp, MPI_UNSIGNED, i, TAG, row_comm, &status);
+      for (j = 0; j < tmp; ++j) { printf("%u\n", best[j]); }
     }
     free(best);
+  } else if ((0 == row_nid) && (0 != nid)) {
+    MPI_Send(my_idx, my_nU, MPI_UNSIGNED, 0, TAG, row_comm);
   }
 
   free(my_idx);
@@ -516,11 +522,11 @@ main(int argc, char* argv[])
   Lt = matrix_init(my_nU, nF);
   R  = matrix_init(my_nI, nF);
   Rt = matrix_init(my_nI, nF);
+  B  = matrix_init(my_nU, my_nI);
 
   random_fill_L();
   random_fill_R();
 
-  B = matrix_init(my_nU, my_nI);
   
   double secs;
   secs = - MPI_Wtime();

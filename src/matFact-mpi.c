@@ -321,6 +321,8 @@ solve()
     }
   }
 
+  MPI_Barrier(row_comm);
+
   if (row_nid) {
     MPI_Send(my_idx, my_nU, MPI_UNSIGNED, 0, TAG, row_comm);
     MPI_Send(my_max, my_nU, MPI_DOUBLE,   0, TAG, row_comm);
@@ -340,17 +342,24 @@ solve()
     }
   }
 
+  MPI_Barrier(MPI_COMM_WORLD);
+
   if (0 == nid) {
     MPI_Status status;
     for (i = 0; i < my_nU; ++i) { printf("%u\n", my_idx[i]); }
+#if 0
     for (i = 1; i < col_nproc; ++i) {
       tmp = ((i + 1) * nU / row_nproc) - (i * nU / row_nproc);
       MPI_Recv(best, tmp, MPI_UNSIGNED, i, TAG, row_comm, &status);
       for (j = 0; j < tmp; ++j) { printf("%u\n", best[j]); }
     }
+#endif
     free(best);
-  } else if ((0 == row_nid) && (0 != nid)) {
-    MPI_Send(my_idx, my_nU, MPI_UNSIGNED, 0, TAG, row_comm);
+  } else {
+    if ((0 == row_nid) && (0 != nid)) {
+      //MPI_Send(my_idx, my_nU, MPI_UNSIGNED, 0, TAG, row_comm);
+      for (i = 0; i < my_nU; ++i) { printf("%u\n", my_idx[i]); }
+    }
   }
 
   free(my_idx);

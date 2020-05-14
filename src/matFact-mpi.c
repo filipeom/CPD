@@ -238,15 +238,15 @@ solve()
 
   chunk = (uint *) xmalloc(sizeof(uint) * (high_L - low_L));
 
-  memcpy(Lt, L, sizeof(double) * nU * nF);
-  memcpy(Rt, R, sizeof(double) * nI * nF);
+  memcpy(Lt, L, sizeof(double) * (high_L - low_L) * nF);
+  memcpy(Rt, R, sizeof(double) * (high_R - low_R) * nF);
 
   while (N--) {
-    if (row_nid) memset(L, '\x00', sizeof(double) * nU * nF);
-    if (col_nid) memset(R, '\x00', sizeof(double) * nI * nF);
+    if (row_nid) memset(L, '\x00', sizeof(double) * (high_L - low_L) * nF);
+    if (col_nid) memset(R, '\x00', sizeof(double) * (high_R - low_R) * nF);
 
     for (ij = 0; ij < nnz; ++ij) {
-      i = A->row[ij], j = A->col[ij];
+      i = A->row[ij]-low_L, j = A->col[ij]-low_R;
       m1 = &L[i * nF], mt1 = &Lt[i * nF];
       m2 = &R[j * nF], mt2 = &Rt[j * nF];
       tmp = a * 2 * (A->val[ij] - dot_prod(mt1, mt2, nF));
@@ -256,11 +256,11 @@ solve()
       }
     }
     
-    memset(Lt, '\x00', sizeof(double) * nU * nF);
+    memset(Lt, '\x00', sizeof(double) * (high_L - low_L) * nF);
 
     MPI_Allreduce(
-        &L[low_L * nF],
-        &Lt[low_L * nF],
+        L,
+        Lt,
         (high_L - low_L) * nF,
         MPI_DOUBLE,
         MPI_SUM,
@@ -269,11 +269,11 @@ solve()
 
     MPI_Barrier(row_comm);
 
-    memset(Rt, '\x00', sizeof(double) * nI * nF);
+    memset(Rt, '\x00', sizeof(double) * (high_R - low_R) * nF);
 
     MPI_Allreduce(
-        &R[low_R * nF],
-        &Rt[low_R * nF],
+        R,
+        Rt,
         (high_R - low_R) * nF,
         MPI_DOUBLE,
         MPI_SUM,
@@ -282,8 +282,8 @@ solve()
 
     MPI_Barrier(col_comm);
 
-    memcpy(L, Lt, sizeof(double) * nU * nF);
-    memcpy(R, Rt, sizeof(double) * nI * nF);
+    memcpy(L, Lt, sizeof(double) * (high_L - low_L) * nF);
+    memcpy(R, Rt, sizeof(double) * (high_R - low_R) * nF);
 
     /* Synchronization necessary before each new iteration */
     MPI_Barrier(MPI_COMM_WORLD);
@@ -505,9 +505,6 @@ main(int argc, char* argv[])
   random_fill_L();
   random_fill_R();
   
-  matrix_print(L, high_L-low_L, nF);
-  matrix_print(R, high_R-low_R, nF);
-
   double secs;
   secs = - MPI_Wtime();
   //solve();

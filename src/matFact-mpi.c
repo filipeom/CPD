@@ -19,10 +19,17 @@ struct csr {
   double *val;
 };
 
-/* globals */
-static int p     = 0;
-static int nid   = 0;      /* calling node id  */
-static int nproc = 0;      /* number of node */
+/* globals - but only here */
+static int p         = 0;
+static int nid       = 0;  /* calling node id */
+static int nproc     = 0;  /* number of nodes */
+static int row_nid   = 0;
+static int row_nproc = 0;
+static int col_nid   = 0;
+static int col_nproc = 0;
+
+static MPI_Comm row_comm;
+static MPI_Comm col_comm;
 
 static uint N   = 0;       /* iteration count */
 static uint nF  = 0;       /* number of feats */
@@ -43,9 +50,6 @@ static double *Rt = NULL;  /* feats-items matrix (prev it) */
 static double *R  = NULL;  /* feats-items matrix (curr it) */
 
 static struct csr *A  = NULL;
-static struct csr *At = NULL;
-
-static MPI_Comm row_comm;
 
 /* general helpers */
 void
@@ -203,37 +207,47 @@ solve()
 {
   uint *best, *chunk;
   size_t i, j, k, ij;
-  double tmp, max;
-  double *m, *mt;
-  int low, high;
-  int chunk_L, chunk_R;
-  int cnts_L[nproc], cnts_R[nproc];
-  int offs_L[nproc], offs_R[nproc];
+  double tmp;
+  double *m1, *m2;
+  double *mt1, *mt2;
   
   if (0 == nid) {
     best = (uint *) xmalloc(sizeof(uint) * nU);
   }
+
+  low_L = col_nid * nU / row_nproc;
+  low_R = row_nid * nI / col_nproc;
+  high_L = (col_nid + 1) * nU / row_nproc;
+  high_R = (row_nid + 1) * nI / col_nproc;
 
   chunk = (uint *) xmalloc(sizeof(uint) * (high_L - low_L));
 
   while (N--) {
     memcpy(Rt, R, sizeof(double) * nI * nF);
     memcpy(Lt, L, sizeof(double) * nU * nF);
-
     for (ij = 0; ij < nnz; ++ij) {
-      i = A->row[ij];
-      j = A->col[ij];
-      tmp = dot_prod(&Lt[i * nF], &Rt[j * nF], nF);
-      tmp = a * 2 * (A->val[ij] - tmp);
+      i = A->row[ij], j = A->col[ij];
+      m1 = &L[i * nF], mt1 = &Lt[i * nF];
+      m2 = &R[j * nF], mt2 = &Rt[j * nF];
+      tmp = a * 2 * (A->val[ij] - dot_prod(mt1, mt2, nF));
       for (k = 0; k < nF; ++k) {
-        L[i * nF + k] += tmp * Rt[j * nF + k];
-        R[j * nF + k] += tmp * Lt[i * nF + k];
+        m1[k] += tmp * mt2[k];
+        m2[k] += tmp * mt1[k];
       }
     }
     
     /* TODO: Reduce over lines on L */
+    MPI_Reduce(
+        &L[low_L * nF],
+        &L[low_L * nF],
+        (high_L - low_L) * nF,
+        MPI_DOUBLE,
+        MPI_SUM,
+        row_nid,
+        row_comm
+    );
     /* TODO: Reduce over columns on R */
-
+    return;
 #if 0
     MPI_Allgatherv(
         &L[low_L*nF],     /* src buffer */
@@ -257,7 +271,6 @@ solve()
         MPI_COMM_WORLD    /* group of nodes involved in this comm */
     );
 #endif 
-
     /* Synchronization necessary before each new iteration */
     MPI_Barrier(MPI_COMM_WORLD);
   } /* end while */
@@ -325,6 +338,8 @@ get_idx(uint x, uint vsize, int psize)
 int
 main(int argc, char* argv[])
 {
+  int color;
+
   MPI_Init(&argc, &argv);
 
   MPI_Comm_rank(MPI_COMM_WORLD, &nid);
@@ -333,26 +348,33 @@ main(int argc, char* argv[])
   // XXX: REFACTOR
   p = sqrt(nproc);
 
-  // XXX: REFACTOR
-  int color = nid / p;
+  /* Create grid comms */
+  color = floor(nid / p);
   MPI_Comm_split(MPI_COMM_WORLD, color, nid, &row_comm);
-
-  // XXX: REFACTOR
-  int row_nid, row_nproc;
   MPI_Comm_rank(row_comm, &row_nid);
   MPI_Comm_size(row_comm, &row_nproc);
 
-  int cnt[p][row_nproc];
-  for (int i = 0; i < p; ++i) {
-    for (int j = 0; j < row_nproc; ++j) {
+  color = nid % p;
+  MPI_Comm_split(MPI_COMM_WORLD, color, nid, &col_comm);
+  MPI_Comm_rank(col_comm, &col_nid);
+  MPI_Comm_size(col_comm, &col_nproc);
+
+  int cnt[row_nproc][col_nproc];
+  for (int i = 0; i < row_nproc; ++i) {
+    for (int j = 0; j < col_nproc; ++j) {
       cnt[i][j] = 0;
     }
   }
+
+  die("");
 
   if (0 == nid) {
     FILE *fp;
     size_t i, j;
     double v;
+
+    int x, y, ex;
+    long nnz_pos;
 
     if (2 != argc) {
       die("usage:\n\t%s <input-file>\n", argv[0]);
@@ -379,8 +401,9 @@ main(int argc, char* argv[])
       MPI_Send(&nI,  1, MPI_UNSIGNED, id, TAG, MPI_COMM_WORLD);
     }
 
-    long curr = ftell(fp);
-    int x = 0, y = 0;
+    nnz_pos = ftell(fp);
+
+    x = 0, y = 0;
     for (size_t ij = 0; ij < nnz; ++ij) {
       i = parse_uint(fp);
       j = parse_uint(fp);
@@ -402,10 +425,9 @@ main(int argc, char* argv[])
     A = csr_matrix_init(cnt[0][0]);
 
     rewind(fp);
-    fseek(fp, curr, SEEK_SET);
+    fseek(fp, nnz_pos, SEEK_SET);
 
-    int ex = 0;
-    x = 0, y = 0;
+    x = 0, y = 0, ex = 0;
     for (size_t ij = 0; ij < nnz; ++ij) {
       i = parse_uint(fp);
       j = parse_uint(fp);
@@ -456,8 +478,8 @@ main(int argc, char* argv[])
   R  = matrix_init(nI, nF);
   Rt = matrix_init(nI, nF);
 
-  /* where should this be executed? */
-  random_fill_LR();
+  /* TODO: where should this be executed? */
+  if (!row_nid) random_fill_LR();
 
   double secs;
   secs = - MPI_Wtime();

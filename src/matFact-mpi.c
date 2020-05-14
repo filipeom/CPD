@@ -1,14 +1,12 @@
+#include <mpi.h>
+#include <math.h>
 #include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
 
-#include <mpi.h>
-#include <math.h>
-
 #define TAG    0x42
-#define DEBUG  0
 #define RAND01 ((double)rand() / (double)RAND_MAX)
 
 typedef unsigned int uint;
@@ -208,17 +206,12 @@ solve()
   uint *best, *chunk;
   size_t i, j, k, ij;
   double tmp;
-  double *m1, *m2;
-  double *mt1, *mt2;
+  double *m1, *mt1;
+  double *m2, *mt2;
   
   if (0 == nid) {
     best = (uint *) xmalloc(sizeof(uint) * nU);
   }
-
-  low_L = col_nid * nU / row_nproc;
-  low_R = row_nid * nI / col_nproc;
-  high_L = (col_nid + 1) * nU / row_nproc;
-  high_R = (row_nid + 1) * nI / col_nproc;
 
   chunk = (uint *) xmalloc(sizeof(uint) * (high_L - low_L));
 
@@ -230,9 +223,9 @@ solve()
     if (col_nid) memset(R, '\x00', sizeof(double) * nI * nF);
 
     for (ij = 0; ij < nnz; ++ij) {
-      i = A->row[ij]; j = A->col[ij];
-      m1 = &L[i * nF]; mt1 = &Lt[i * nF];
-      m2 = &R[j * nF]; mt2 = &Rt[j * nF];
+      i = A->row[ij], j = A->col[ij];
+      m1 = &L[i * nF], mt1 = &Lt[i * nF];
+      m2 = &R[j * nF], mt2 = &Rt[j * nF];
       tmp = a * 2 * (A->val[ij] - dot_prod(mt1, mt2, nF));
       for (k = 0; k < nF; ++k) {
         m1[k] += tmp * mt2[k];
@@ -367,8 +360,8 @@ main(int argc, char* argv[])
 
   if (0 == nid) {
     FILE *fp;
-    size_t i, j;
     double v;
+    size_t i, j, ij;
 
     int x, y, ex;
     long nnz_pos;
@@ -400,8 +393,7 @@ main(int argc, char* argv[])
 
     nnz_pos = ftell(fp);
 
-    x = 0, y = 0;
-    for (size_t ij = 0; ij < nnz; ++ij) {
+    for (ij = 0; ij < nnz; ++ij) {
       i = parse_uint(fp);
       j = parse_uint(fp);
       v = parse_double(fp); /* dummy parse */
@@ -424,8 +416,7 @@ main(int argc, char* argv[])
     rewind(fp);
     fseek(fp, nnz_pos, SEEK_SET);
 
-    x = 0, y = 0, ex = 0;
-    for (size_t ij = 0; ij < nnz; ++ij) {
+    for (ij = 0, ex = 0; ij < nnz; ++ij) {
       i = parse_uint(fp);
       j = parse_uint(fp);
       v = parse_double(fp);
@@ -470,12 +461,24 @@ main(int argc, char* argv[])
     }
   }
 
+  low_L = col_nid * nU / row_nproc;
+  low_R = row_nid * nI / col_nproc;
+  high_L = (col_nid + 1) * nU / row_nproc;
+  high_R = (row_nid + 1) * nI / col_nproc;
+
+#if 0
+  printf("{rank = %d} -> {\n", nid);
+  for (int ij = 0; ij < nnz; ++ij) {
+    printf("\t(%u, %u, %lf)\n", A->row[ij], A->col[ij], A->val[ij]);
+  }
+  printf("}\n");
+#endif
+
   L  = matrix_init(nU, nF);
   Lt = matrix_init(nU, nF);
   R  = matrix_init(nI, nF);
   Rt = matrix_init(nI, nF);
 
-  /* TODO: where should this be executed? */
   random_fill_LR();
 
   double secs;

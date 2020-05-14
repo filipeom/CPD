@@ -222,13 +222,17 @@ solve()
 
   chunk = (uint *) xmalloc(sizeof(uint) * (high_L - low_L));
 
+  memcpy(Lt, L, sizeof(double) * nU * nF);
+  memcpy(Rt, R, sizeof(double) * nI * nF);
+
   while (N--) {
-    memcpy(Rt, R, sizeof(double) * nI * nF);
-    memcpy(Lt, L, sizeof(double) * nU * nF);
+    if (row_nid) memset(L, '\x00', sizeof(double) * nU * nF);
+    if (col_nid) memset(R, '\x00', sizeof(double) * nI * nF);
+
     for (ij = 0; ij < nnz; ++ij) {
-      i = A->row[ij], j = A->col[ij];
-      m1 = &L[i * nF], mt1 = &Lt[i * nF];
-      m2 = &R[j * nF], mt2 = &Rt[j * nF];
+      i = A->row[ij]; j = A->col[ij];
+      m1 = &L[i * nF]; mt1 = &Lt[i * nF];
+      m2 = &R[j * nF]; mt2 = &Rt[j * nF];
       tmp = a * 2 * (A->val[ij] - dot_prod(mt1, mt2, nF));
       for (k = 0; k < nF; ++k) {
         m1[k] += tmp * mt2[k];
@@ -236,45 +240,40 @@ solve()
       }
     }
     
-    /* TODO: Reduce over lines on L */
-    MPI_Reduce(
+    memset(Lt, '\x00', sizeof(double) * nU * nF);
+
+    MPI_Allreduce(
         &L[low_L * nF],
-        &L[low_L * nF],
+        &Lt[low_L * nF],
         (high_L - low_L) * nF,
         MPI_DOUBLE,
         MPI_SUM,
-        row_nid,
         row_comm
     );
-    /* TODO: Reduce over columns on R */
-    return;
-#if 0
-    MPI_Allgatherv(
-        &L[low_L*nF],     /* src buffer */
-        chunk_L,          /* length of data to send */
-        MPI_DOUBLE,       /* type of data to send */
-        L,                /* recv buffer */
-        cnts_L,           /* buffer with the recvcnt from each node */
-        offs_L,           /* offset where each node should write to L */
-        MPI_DOUBLE,       /* type of data to recv */
-        MPI_COMM_WORLD    /* group of nodes involved in this comm */
+
+    MPI_Barrier(row_comm);
+
+    memset(Rt, '\x00', sizeof(double) * nI * nF);
+
+    MPI_Allreduce(
+        &R[low_R * nF],
+        &Rt[low_R * nF],
+        (high_R - low_R) * nF,
+        MPI_DOUBLE,
+        MPI_SUM,
+        col_comm
     );
 
-    MPI_Allgatherv(
-        &R[low_R*nF],     /* src buffer */
-        chunk_R,          /* length of data to send */
-        MPI_DOUBLE,       /* type of data to send */
-        R,                /* recv buffer */
-        cnts_R,           /* buffer with the recvcnt from each node */
-        offs_R,           /* offset where each node should write to R */
-        MPI_DOUBLE,       /* type of data to recv */
-        MPI_COMM_WORLD    /* group of nodes involved in this comm */
-    );
-#endif 
+    MPI_Barrier(col_comm);
+
+    memcpy(L, Lt, sizeof(double) * nU * nF);
+    memcpy(R, Rt, sizeof(double) * nI * nF);
+
     /* Synchronization necessary before each new iteration */
     MPI_Barrier(MPI_COMM_WORLD);
   } /* end while */
 
+// TODO: find max
 #if 0
   for (i = low_L, ix = 0; i < high_L; ++i, ++ix) {
     max = 0;
@@ -345,7 +344,7 @@ main(int argc, char* argv[])
   MPI_Comm_rank(MPI_COMM_WORLD, &nid);
   MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 
-  // XXX: REFACTOR
+  // FIXME: Support non-square grids
   p = sqrt(nproc);
 
   /* Create grid comms */
@@ -354,7 +353,7 @@ main(int argc, char* argv[])
   MPI_Comm_rank(row_comm, &row_nid);
   MPI_Comm_size(row_comm, &row_nproc);
 
-  color = nid % p;
+  color = (nid % p) + TAG;
   MPI_Comm_split(MPI_COMM_WORLD, color, nid, &col_comm);
   MPI_Comm_rank(col_comm, &col_nid);
   MPI_Comm_size(col_comm, &col_nproc);
@@ -365,8 +364,6 @@ main(int argc, char* argv[])
       cnt[i][j] = 0;
     }
   }
-
-  die("");
 
   if (0 == nid) {
     FILE *fp;
@@ -479,7 +476,7 @@ main(int argc, char* argv[])
   Rt = matrix_init(nI, nF);
 
   /* TODO: where should this be executed? */
-  if (!row_nid) random_fill_LR();
+  random_fill_LR();
 
   double secs;
   secs = - MPI_Wtime();

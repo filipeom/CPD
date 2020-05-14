@@ -289,6 +289,17 @@ solve()
     MPI_Barrier(MPI_COMM_WORLD);
   } /* end while */
 
+#if 0
+  if (0 == row_nid) {
+    printf("L in %d\n", nid);
+    matrix_print(Lt, high_L - low_L, nF);
+  }
+  if (0 == col_nid) {
+    printf("R in %d\n", nid);
+    matrix_print(Rt, high_R - low_R, nF);
+  }
+#endif
+
 // TODO: find max
 #if 0
   for (i = low_L, ix = 0; i < high_L; ++i, ++ix) {
@@ -507,7 +518,7 @@ main(int argc, char* argv[])
   
   double secs;
   secs = - MPI_Wtime();
-  //solve();
+  solve();
   secs += MPI_Wtime();
   
   // Redirect stdout to file and get time on stderr
@@ -521,6 +532,7 @@ main(int argc, char* argv[])
   csr_matrix_destroy(&A);
 
   MPI_Comm_free(&row_comm);
+  MPI_Comm_free(&col_comm);
   MPI_Finalize();
   return 0;
 }

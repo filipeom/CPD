@@ -37,6 +37,9 @@ static uint nnz = 0;       /* number of !zero */
 
 static double a = 0;       /* alpha constant */
 
+static uint my_nU  = 0;
+static uint my_nI  = 0;
+
 static uint low_L  = 0;
 static uint low_R  = 0;
 static uint high_L = 0;
@@ -46,6 +49,7 @@ static double *Lt = NULL;  /* users-feats matrix (prev it) */
 static double *L  = NULL;  /* users-feats matrix (curr it) */
 static double *Rt = NULL;  /* feats-items matrix (prev it) */
 static double *R  = NULL;  /* feats-items matrix (curr it) */
+static double *B  = NULL;
 
 static struct csr *A  = NULL;
 
@@ -180,7 +184,7 @@ random_fill_L()
       rand();
     }
   }
-  for (i = 0; i < (high_L - low_L); ++i) {
+  for (i = 0; i < my_nU; ++i) {
     for (j = 0; j < nF; ++j) {
       L[i * nF + j] = RAND01 / (double) nF;
     }
@@ -202,7 +206,7 @@ random_fill_R()
     for (j = 0; j < low_R; ++j) {
       rand();
     }
-    for (j = 0; j < (high_R - low_R); ++j) {
+    for (j = 0; j < my_nI; ++j) {
       R[j * nF + i] = RAND01 / (double) nF;
     }
     for (j = high_R; j < nI; ++j) {
@@ -226,27 +230,36 @@ dot_prod(double m1[], double m2[], size_t size)
 void
 solve()
 {
-  uint *best, *chunk;
+  uint   *best;
+  uint   *my_idx;
+  double *my_max;
   size_t i, j, k, ij;
-  double tmp;
+  double tmp, max_nU;
   double *m1, *mt1;
   double *m2, *mt2;
-  
-  if (0 == nid) {
-    best = (uint *) xmalloc(sizeof(uint) * nU);
+
+  for (i = 0, max_nU = 0; i < row_nproc; ++i) {
+    int low = i * nU / row_nproc;
+    int high = (i + 1) * nU / row_nproc;
+    max_nU = ((high - low) > max_nU) ? (high - low) : max_nU;
   }
 
-  chunk = (uint *) xmalloc(sizeof(uint) * (high_L - low_L));
+  if (0 == nid) {
+    best = (uint *) xmalloc(sizeof(uint) * max_nU);
+  }
 
-  memcpy(Lt, L, sizeof(double) * (high_L - low_L) * nF);
-  memcpy(Rt, R, sizeof(double) * (high_R - low_R) * nF);
+  my_idx = (uint *)   xmalloc(sizeof(uint)   * my_nU);
+  my_max = (double *) xmalloc(sizeof(double) * my_nU);
+
+  memcpy(Lt, L, sizeof(double) * my_nU * nF);
+  memcpy(Rt, R, sizeof(double) * my_nI * nF);
 
   while (N--) {
-    if (row_nid) memset(L, '\x00', sizeof(double) * (high_L - low_L) * nF);
-    if (col_nid) memset(R, '\x00', sizeof(double) * (high_R - low_R) * nF);
+    if (row_nid) memset(L, '\x00', sizeof(double) * my_nU * nF);
+    if (col_nid) memset(R, '\x00', sizeof(double) * my_nI * nF);
 
     for (ij = 0; ij < nnz; ++ij) {
-      i = A->row[ij]-low_L, j = A->col[ij]-low_R;
+      i = A->row[ij] - low_L, j = A->col[ij] - low_R;
       m1 = &L[i * nF], mt1 = &Lt[i * nF];
       m2 = &R[j * nF], mt2 = &Rt[j * nF];
       tmp = a * 2 * (A->val[ij] - dot_prod(mt1, mt2, nF));
@@ -256,12 +269,12 @@ solve()
       }
     }
     
-    memset(Lt, '\x00', sizeof(double) * (high_L - low_L) * nF);
+    memset(Lt, '\x00', sizeof(double) * my_nU * nF);
 
     MPI_Allreduce(
         L,
         Lt,
-        (high_L - low_L) * nF,
+        my_nU * nF,
         MPI_DOUBLE,
         MPI_SUM,
         row_comm
@@ -269,12 +282,12 @@ solve()
 
     MPI_Barrier(row_comm);
 
-    memset(Rt, '\x00', sizeof(double) * (high_R - low_R) * nF);
+    memset(Rt, '\x00', sizeof(double) * my_nI * nF);
 
     MPI_Allreduce(
         R,
         Rt,
-        (high_R - low_R) * nF,
+        my_nI * nF,
         MPI_DOUBLE,
         MPI_SUM,
         col_comm
@@ -282,73 +295,60 @@ solve()
 
     MPI_Barrier(col_comm);
 
-    memcpy(L, Lt, sizeof(double) * (high_L - low_L) * nF);
-    memcpy(R, Rt, sizeof(double) * (high_R - low_R) * nF);
-
-    /* Synchronization necessary before each new iteration */
-    MPI_Barrier(MPI_COMM_WORLD);
+    memcpy(L, Lt, sizeof(double) * my_nU * nF);
+    memcpy(R, Rt, sizeof(double) * my_nI * nF);
   } /* end while */
 
-#if 0
-  if (0 == row_nid) {
-    printf("L in %d\n", nid);
-    matrix_print(Lt, high_L - low_L, nF);
+  for (i = 0; i < my_nU; ++i) {
+    for (j = 0; j < my_nI; ++i) {
+      B[i * my_nI + j] = dot_prod(&Lt[i * nF], &Rt[j * nF], nF);
+    }
   }
-  if (0 == col_nid) {
-    printf("R in %d\n", nid);
-    matrix_print(Rt, high_R - low_R, nF);
-  }
-#endif
 
-// TODO: find max
-#if 0
-  for (i = low_L, ix = 0; i < high_L; ++i, ++ix) {
-    max = 0;
-    jx = A->row[i];
-    for (j = 0; j < nI; ++j) {
-      if ((A->row[i + 1] - A->row[i]) &&
-          (A->row[i + 1] > jx) &&
-          (A->col[jx] == j)) {
-        jx++;
-      } else {
-        tmp = dot_prod(&L[i * nF], &R[j * nF], nF);
-        if (tmp > max) {
-          max = tmp;
-          chunk[ix] = j;
+  for (ij = 0; ij < nnz; ++ij) {
+    i = A->row[ij] - low_L, j = A->col[ij] - low_R;
+    B[i * my_nI + j] = 0;
+  }
+
+  for (i = 0; i < my_nU; ++i) {
+    my_max[i] = 0;
+    for (j = 0; j < my_nI; ++i) {
+      tmp = B[i * my_nI + j];
+      if (tmp > my_max[i]) {
+        my_max[i] = tmp;
+        my_idx[i] = j + low_R;
+      }
+    }
+  }
+
+  if (row_nid) {
+    MPI_Send(my_idx, my_nU, MPI_UNSIGNED, 0, TAG, row_comm);
+    MPI_Send(my_max, my_nU, MPI_DOUBLE,   0, TAG, row_comm);
+  } else {
+    MPI_Status status;
+    uint   aux_idx[my_nU];
+    double aux_max[my_nU];
+    for (i = 1; i < row_nproc; ++i) {
+      MPI_Recv(aux_idx, my_nU, MPI_UNSIGNED, i, TAG, row_comm, &status);
+      MPI_Recv(aux_max, my_nU, MPI_DOUBLE,   i, TAG, row_comm, &status);
+      for (j = 0; j < my_nU; ++j) {
+        if (aux_max[j] > my_max[j]) {
+          my_max[j] = aux_max[j];
+          my_idx[j] = aux_idx[j];
         }
       }
     }
   }
 
-  for (i = 0; i < nproc; ++i) {
-    low = i * nU / nproc;
-    high = (i + 1) * nU / nproc;
-    cnts_L[i] = high - low;
-    offs_L[i] = low;
-  }
-
-
-  MPI_Gatherv(
-      chunk,              /* src buffer */
-      high_L - low_L,     /* length of data to send */
-      MPI_INT,            /* type of data to send */
-      best,               /* recv buffer */
-      cnts_L,             /* buffer with the recvcnt from each node */
-      offs_L,             /* offset where root will start writing data from each node to recv buffer */
-      MPI_INT,            /* type of data to recv */
-      0,                  /* root nid */
-      MPI_COMM_WORLD      /* group of nodes involved in this comm */
-  );
-#endif
-
   if (0 == nid) {
-    for (i = 0; i < nU; ++i) printf("%u\n", best[i]);
+    for (i = 0; i < my_nU; ++i) {
+      printf("%u\n", my_idx[i]);
+    }
     free(best);
-    best = NULL;
   }
 
-  free(chunk);
-  chunk = NULL;
+  free(my_idx);
+  free(my_max);
 }
 
 int
@@ -497,8 +497,12 @@ main(int argc, char* argv[])
 
   low_L = col_nid * nU / row_nproc;
   low_R = row_nid * nI / col_nproc;
+
   high_L = (col_nid + 1) * nU / row_nproc;
   high_R = (row_nid + 1) * nI / col_nproc;
+
+  my_nU = high_L - low_L;
+  my_nI = high_R - low_R;
 
 #if 0
   printf("{rank = %d} -> {\n", nid);
@@ -508,13 +512,15 @@ main(int argc, char* argv[])
   printf("}\n");
 #endif
 
-  L  = matrix_init(high_L-low_L, nF);
-  Lt = matrix_init(high_L-low_L, nF);
-  R  = matrix_init(high_R-low_R, nF);
-  Rt = matrix_init(high_R-low_R, nF);
+  L  = matrix_init(my_nU, nF);
+  Lt = matrix_init(my_nU, nF);
+  R  = matrix_init(my_nI, nF);
+  Rt = matrix_init(my_nI, nF);
 
   random_fill_L();
   random_fill_R();
+
+  B = matrix_init(my_nU, my_nI);
   
   double secs;
   secs = - MPI_Wtime();
@@ -524,6 +530,7 @@ main(int argc, char* argv[])
   // Redirect stdout to file and get time on stderr
   if (0 == nid) fprintf(stderr, "Time = %12.6f sec\n", secs);
 
+  matrix_destroy(&B);
   matrix_destroy(&Rt);
   matrix_destroy(&R);
   matrix_destroy(&Lt);

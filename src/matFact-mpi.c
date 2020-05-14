@@ -169,21 +169,44 @@ csr_matrix_destroy(struct csr **matrix)
 
 /* required initilizer */
 void
-random_fill_LR()
+random_fill_L()
 {
   size_t i, j;
 
   srand(0);
 
-  for (i = 0; i < nU; ++i) {
+  for (i = 0; i < low_L; ++i) {
+    for (j = 0; j < nF; ++j) {
+      rand();
+    }
+  }
+  for (i = 0; i < (high_L - low_L); ++i) {
     for (j = 0; j < nF; ++j) {
       L[i * nF + j] = RAND01 / (double) nF;
     }
   }
+  for (i = high_L; i < nU; ++i) {
+    for (j = 0; j < nF; ++j) {
+      rand();
+    }
+  }
+
+}
+
+void
+random_fill_R()
+{
+  size_t i, j;
 
   for (i = 0; i < nF; ++i) {
-    for (j = 0; j < nI; ++j) {
+    for (j = 0; j < low_R; ++j) {
+      rand();
+    }
+    for (j = 0; j < (high_R - low_R); ++j) {
       R[j * nF + i] = RAND01 / (double) nF;
+    }
+    for (j = high_R; j < nI; ++j) {
+      rand();
     }
   }
 }
@@ -469,17 +492,21 @@ main(int argc, char* argv[])
 #if 0
   printf("{rank = %d} -> {\n", nid);
   for (int ij = 0; ij < nnz; ++ij) {
-    printf("\t(%u, %u, %lf)\n", A->row[ij], A->col[ij], A->val[ij]);
+    printf("\t(%u, %u, %lf)\n", A->row[ij]-low_L, A->col[ij]-low_R, A->val[ij]);
   }
   printf("}\n");
 #endif
 
-  L  = matrix_init(nU, nF);
-  Lt = matrix_init(nU, nF);
-  R  = matrix_init(nI, nF);
-  Rt = matrix_init(nI, nF);
+  L  = matrix_init(high_L-low_L, nF);
+  Lt = matrix_init(high_L-low_L, nF);
+  R  = matrix_init(high_R-low_R, nF);
+  Rt = matrix_init(high_R-low_R, nF);
 
-  random_fill_LR();
+  random_fill_L();
+  random_fill_R();
+  
+  matrix_print(L, high_L-low_L, nF);
+  matrix_print(R, high_R-low_R, nF);
 
   double secs;
   secs = - MPI_Wtime();

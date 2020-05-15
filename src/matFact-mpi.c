@@ -237,15 +237,12 @@ solve()
   double tmp, max_nU;
   double *m1, *mt1;
   double *m2, *mt2;
+  MPI_Status status;
 
   for (i = 0, max_nU = 0; i < row_nproc; ++i) {
     int low = i * nU / row_nproc;
     int high = (i + 1) * nU / row_nproc;
     max_nU = ((high - low) > max_nU) ? (high - low) : max_nU;
-  }
-
-  if (0 == nid) {
-    best = (uint *) xmalloc(sizeof(uint) * max_nU);
   }
 
   my_idx = (uint *)   xmalloc(sizeof(uint)   * my_nU);
@@ -269,7 +266,8 @@ solve()
       }
     }
     
-    memset(Lt, '\x00', sizeof(double) * my_nU * nF);
+
+    MPI_Barrier(row_comm);
 
     MPI_Allreduce(
         L,
@@ -280,9 +278,7 @@ solve()
         row_comm
     );
 
-    MPI_Barrier(row_comm);
-
-    memset(Rt, '\x00', sizeof(double) * my_nI * nF);
+    MPI_Barrier(col_comm);
 
     MPI_Allreduce(
         R,
@@ -292,8 +288,6 @@ solve()
         MPI_SUM,
         col_comm
     );
-
-    MPI_Barrier(col_comm);
 
     memcpy(L, Lt, sizeof(double) * my_nU * nF);
     memcpy(R, Rt, sizeof(double) * my_nI * nF);
@@ -321,13 +315,10 @@ solve()
     }
   }
 
-  MPI_Barrier(row_comm);
-
   if (row_nid) {
     MPI_Send(my_idx, my_nU, MPI_UNSIGNED, 0, TAG, row_comm);
     MPI_Send(my_max, my_nU, MPI_DOUBLE,   0, TAG, row_comm);
   } else {
-    MPI_Status status;
     uint   aux_idx[my_nU];
     double aux_max[my_nU];
     for (i = 1; i < row_nproc; ++i) {
@@ -342,11 +333,9 @@ solve()
     }
   }
 
-  MPI_Barrier(MPI_COMM_WORLD);
-
   if (0 == nid) {
     int size;
-    MPI_Status status;
+    best = (uint *) xmalloc(sizeof(uint) * max_nU);
     for (i = 0; i < my_nU; ++i) { printf("%u\n", my_idx[i]); }
     for (i = 1; i < col_nproc; ++i) {
       MPI_Recv(&size, 1, MPI_INT, i * row_nproc, TAG, MPI_COMM_WORLD, &status);
@@ -518,14 +507,6 @@ main(int argc, char* argv[])
   my_nU = high_L - low_L;
   my_nI = high_R - low_R;
 
-#if 0
-  printf("{rank = %d} -> {\n", nid);
-  for (int ij = 0; ij < nnz; ++ij) {
-    printf("\t(%u, %u, %lf)\n", A->row[ij]-low_L, A->col[ij]-low_R, A->val[ij]);
-  }
-  printf("}\n");
-#endif
-
   L  = matrix_init(my_nU, nF);
   Lt = matrix_init(my_nU, nF);
   R  = matrix_init(my_nI, nF);
@@ -534,7 +515,6 @@ main(int argc, char* argv[])
 
   random_fill_L();
   random_fill_R();
-
   
   double secs;
   secs = - MPI_Wtime();

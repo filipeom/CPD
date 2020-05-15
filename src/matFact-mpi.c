@@ -234,16 +234,10 @@ solve()
   uint   *my_idx;
   double *my_max;
   size_t i, j, k, ij;
-  double tmp, max_nU;
+  double tmp;
   double *m1, *mt1;
   double *m2, *mt2;
   MPI_Status status;
-
-  for (i = 0, max_nU = 0; i < row_nproc; ++i) {
-    int low = i * nU / row_nproc;
-    int high = (i + 1) * nU / row_nproc;
-    max_nU = ((high - low) > max_nU) ? (high - low) : max_nU;
-  }
 
   my_idx = (uint *)   xmalloc(sizeof(uint)   * my_nU);
   my_max = (double *) xmalloc(sizeof(double) * my_nU);
@@ -335,7 +329,7 @@ solve()
 
   if (0 == nid) {
     int size;
-    best = (uint *) xmalloc(sizeof(uint) * max_nU);
+    best = (uint *) xmalloc(sizeof(uint) * ceil(nU / col_nproc));
     for (i = 0; i < my_nU; ++i) { printf("%u\n", my_idx[i]); }
     for (i = 1; i < col_nproc; ++i) {
       MPI_Recv(&size, 1, MPI_INT, i * row_nproc, TAG, MPI_COMM_WORLD, &status);

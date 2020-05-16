@@ -51,7 +51,8 @@ static double *Rt = NULL;  /* feats-items matrix (prev it) */
 static double *R  = NULL;  /* feats-items matrix (curr it) */
 static double *B  = NULL;
 
-static struct csr *A  = NULL;
+static char *argv0   = NULL;
+static struct csr *A = NULL;
 
 /* general helpers */
 void
@@ -64,6 +65,11 @@ die(const char *err_str, ...)
   va_end(ap);
   /* abort all other */
   MPI_Abort(MPI_COMM_WORLD, 1);
+}
+
+void
+usage(void) {
+  die("usage:\n\t%s <input-file>\n", argv0);
 }
 
 void *
@@ -239,12 +245,9 @@ solve()
   double *m2, *mt2;
   MPI_Status status;
 
-  my_idx = (uint *)   xmalloc(sizeof(uint)   * my_nU);
-  my_max = (double *) xmalloc(sizeof(double) * my_nU);
-
   memcpy(Lt, L, sizeof(double) * my_nU * nF);
   memcpy(Rt, R, sizeof(double) * my_nI * nF);
-
+  /* factorization of L and R */
   while (N--) {
     if (row_nid) memset(L, '\x00', sizeof(double) * my_nU * nF);
     if (col_nid) memset(R, '\x00', sizeof(double) * my_nI * nF);
@@ -259,45 +262,30 @@ solve()
         m2[k] += tmp * mt1[k];
       }
     }
-    
 
     MPI_Barrier(row_comm);
-
-    MPI_Allreduce(
-        L,
-        Lt,
-        my_nU * nF,
-        MPI_DOUBLE,
-        MPI_SUM,
-        row_comm
-    );
+    MPI_Allreduce(L, Lt, my_nU * nF, MPI_DOUBLE, MPI_SUM, row_comm);
 
     MPI_Barrier(col_comm);
-
-    MPI_Allreduce(
-        R,
-        Rt,
-        my_nI * nF,
-        MPI_DOUBLE,
-        MPI_SUM,
-        col_comm
-    );
+    MPI_Allreduce(R, Rt, my_nI * nF, MPI_DOUBLE, MPI_SUM, col_comm);
 
     memcpy(L, Lt, sizeof(double) * my_nU * nF);
     memcpy(R, Rt, sizeof(double) * my_nI * nF);
   } /* end while */
 
+  my_idx = (uint *)   xmalloc(sizeof(uint)   * my_nU);
+  my_max = (double *) xmalloc(sizeof(double) * my_nU);
+
+  /* TODO: just 1 loop */
   for (i = 0; i < my_nU; ++i) {
     for (j = 0; j < my_nI; ++j) {
       B[i * my_nI + j] = dot_prod(&Lt[i * nF], &Rt[j * nF], nF);
     }
   }
-
   for (ij = 0; ij < nnz; ++ij) {
     i = A->row[ij] - low_L, j = A->col[ij] - low_R;
     B[i * my_nI + j] = 0;
   }
-
   for (i = 0; i < my_nU; ++i) {
     my_max[i] = 0;
     for (j = 0; j < my_nI; ++j) {
@@ -309,39 +297,48 @@ solve()
     }
   }
 
-  if (row_nid) {
-    MPI_Send(my_idx, my_nU, MPI_UNSIGNED, 0, TAG, row_comm);
-    MPI_Send(my_max, my_nU, MPI_DOUBLE,   0, TAG, row_comm);
-  } else {
-    uint   aux_idx[my_nU];
-    double aux_max[my_nU];
+  /* row roots update maxes in their rows */
+  if (0 == row_nid) {
+    uint   *aux_idx = (uint *)   xmalloc(sizeof(uint)   * my_nU);
+    double *aux_max = (double *) xmalloc(sizeof(double) * my_nU);
+
     for (i = 1; i < row_nproc; ++i) {
       MPI_Recv(aux_idx, my_nU, MPI_UNSIGNED, i, TAG, row_comm, &status);
       MPI_Recv(aux_max, my_nU, MPI_DOUBLE,   i, TAG, row_comm, &status);
       for (j = 0; j < my_nU; ++j) {
-        if (aux_max[j] > my_max[j]) {
-          my_max[j] = aux_max[j];
-          my_idx[j] = aux_idx[j];
-        }
+        my_max[j] = (aux_max[j] > my_max[j]) ? aux_max[j] : my_max[j];
+        my_idx[j] = (aux_idx[j] > my_idx[j]) ? aux_idx[j] : my_idx[j];
       }
     }
+
+    free(aux_max);
+    free(aux_idx);
+  } else { /* 0 != row_nid */
+    MPI_Send(my_idx, my_nU, MPI_UNSIGNED, 0, TAG, row_comm);
+    MPI_Send(my_max, my_nU, MPI_DOUBLE,   0, TAG, row_comm);
   }
 
+  /* global root node outputs result */
   if (0 == nid) {
     int size;
     best = (uint *) xmalloc(sizeof(uint) * ceil(nU / col_nproc));
-    for (i = 0; i < my_nU; ++i) { printf("%u\n", my_idx[i]); }
+
+    for (i = 0; i < my_nU; ++i) {
+      printf("%u\n", my_idx[i]);
+    }
+
     for (i = 1; i < col_nproc; ++i) {
-      MPI_Recv(&size, 1, MPI_INT, i * row_nproc, TAG, MPI_COMM_WORLD, &status);
-      MPI_Recv(best, size, MPI_UNSIGNED, i * row_nproc, TAG, MPI_COMM_WORLD, &status);
-      for (j = 0; j < size; ++j) { printf("%u\n", best[j]); }
+      MPI_Recv(&size, 1,    MPI_INT,      i * row_nproc, TAG, MPI_COMM_WORLD, &status);
+      MPI_Recv(best,  size, MPI_UNSIGNED, i * row_nproc, TAG, MPI_COMM_WORLD, &status);
+      for (j = 0; j < size; ++j) {
+        printf("%u\n", best[j]);
+      }
     }
+
     free(best);
-  } else {
-    if ((0 == row_nid) && (0 != nid)) {
-      MPI_Send(&my_nU, 1, MPI_INT, 0, TAG, MPI_COMM_WORLD);
-      MPI_Send(my_idx, my_nU, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD);
-    }
+  } else if (0 == row_nid) {
+    MPI_Send(&my_nU, 1,     MPI_INT,      0, TAG, MPI_COMM_WORLD);
+    MPI_Send(my_idx, my_nU, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD);
   }
 
   free(my_idx);
@@ -371,7 +368,6 @@ main(int argc, char* argv[])
   // FIXME: Support non-square grids
   p = sqrt(nproc);
 
-  /* Create grid comms */
   color = floor(nid / p);
   MPI_Comm_split(MPI_COMM_WORLD, color, nid, &row_comm);
   MPI_Comm_rank(row_comm, &row_nid);
@@ -398,7 +394,8 @@ main(int argc, char* argv[])
     long nnz_pos;
 
     if (2 != argc) {
-      die("usage:\n\t%s <input-file>\n", argv[0]);
+      argv0 = argv[0];
+      usage();
     }
 
     if (NULL == (fp = fopen(argv[1], "r"))) {
@@ -428,16 +425,14 @@ main(int argc, char* argv[])
       i = parse_uint(fp);
       j = parse_uint(fp);
       v = parse_double(fp); /* dummy parse */
-
       x = get_idx(i, nU, p);
       y = get_idx(j, nI, row_nproc);
-
       cnt[x][y]++;
     }
 
     for (i = 0; i < p; ++i) {
       for (j = 0; j < row_nproc; ++j) {
-        if ((i == 0) && (j == 0))  continue;
+        if ((0 == i) && (0 == j))  continue;
         MPI_Send(&cnt[i][j], 1, MPI_INT, i*p+j, TAG, MPI_COMM_WORLD);
       }
     }
@@ -451,10 +446,8 @@ main(int argc, char* argv[])
       i = parse_uint(fp);
       j = parse_uint(fp);
       v = parse_double(fp);
-
       x = get_idx(i, nU, p);
       y = get_idx(j, nI, row_nproc);
-
       if ((0 == x) && (0 == y)) {
         A->row[ex] = i;
         A->col[ex] = j;
@@ -492,24 +485,22 @@ main(int argc, char* argv[])
     }
   }
 
-  low_L = col_nid * nU / row_nproc;
-  low_R = row_nid * nI / col_nproc;
-
+  /* aux parameters */
+  low_L  = col_nid * nU / row_nproc;
+  low_R  = row_nid * nI / col_nproc;
   high_L = (col_nid + 1) * nU / row_nproc;
   high_R = (row_nid + 1) * nI / col_nproc;
-
-  my_nU = high_L - low_L;
-  my_nI = high_R - low_R;
-
-  L  = matrix_init(my_nU, nF);
-  Lt = matrix_init(my_nU, nF);
-  R  = matrix_init(my_nI, nF);
-  Rt = matrix_init(my_nI, nF);
-  B  = matrix_init(my_nU, my_nI);
+  my_nU  = high_L - low_L;
+  my_nI  = high_R - low_R;
+  /* create matrices */
+  L      = matrix_init(my_nU, nF);
+  Lt     = matrix_init(my_nU, nF);
+  R      = matrix_init(my_nI, nF);
+  Rt     = matrix_init(my_nI, nF);
+  B      = matrix_init(my_nU, my_nI);
 
   random_fill_L();
   random_fill_R();
-  
   double secs;
   secs = - MPI_Wtime();
   solve();
@@ -523,9 +514,7 @@ main(int argc, char* argv[])
   matrix_destroy(&R);
   matrix_destroy(&Lt);
   matrix_destroy(&L);
-
   csr_matrix_destroy(&A);
-
   MPI_Comm_free(&row_comm);
   MPI_Comm_free(&col_comm);
   MPI_Finalize();

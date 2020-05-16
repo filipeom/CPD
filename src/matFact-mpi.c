@@ -306,11 +306,12 @@ solve()
       MPI_Recv(aux_idx, my_nU, MPI_UNSIGNED, i, TAG, row_comm, &status);
       MPI_Recv(aux_max, my_nU, MPI_DOUBLE,   i, TAG, row_comm, &status);
       for (j = 0; j < my_nU; ++j) {
-        my_max[j] = (aux_max[j] > my_max[j]) ? aux_max[j] : my_max[j];
-        my_idx[j] = (aux_idx[j] > my_idx[j]) ? aux_idx[j] : my_idx[j];
+        if (aux_max[j] > my_max[j]) {
+          my_max[j] = aux_max[j];
+          my_idx[j] = aux_idx[j];
+        }
       }
     }
-
     free(aux_max);
     free(aux_idx);
   } else { /* 0 != row_nid */

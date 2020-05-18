@@ -269,7 +269,6 @@ solve()
   my_idx = (uint *)   xmalloc(sizeof(uint)   * mU);
   my_max = (double *) xmalloc(sizeof(double) * mU);
 
-  /* FIXME: this can be done in one go, which avoids storing B */
   for (i = 0; i < mU; ++i) {
     my_max[i] = 0;
     jx = A->row[i];
@@ -392,16 +391,27 @@ main(int argc, char* argv[])
     MPI_Recv(&nI,  1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
   }
 
-  // lazy calc
-  for (int i = 1; i < 16; ++i) {
-    for (int j = 1; j < 16; ++j) {
-      if (i*j == np) {
-        rr = i;
-        rc = j;
-        break;
-      }
+  int rnU = sqrt(nU), rnI = sqrt(nI);
+  if (rnU >= nI) { rr = np, rc = 1; }
+  else if (rnI >= nU) { rr = 1, rc = np; }
+  else {
+    double dnp = sqrt(np);
+    int inp = sqrt(np);
+    if (dnp == inp) { rr = rc = inp; } /* prefer square matrices */
+    else {
+      /* FIXME: why bruteforce this calculation? ..............................................................................................................*/
+      /* this just gives a 1D grid ... */
+      for (int i = 1; i < 16; ++i) 
+        for (int j = 1; j < 16; ++j)
+          if (i * j == np) {
+            rr = i, rc = j;
+            break;
+          }
     }
   }
+
+  printf("rr=%d, rc=%d\n", rr, rc);
+  die("");
 
   color = floor(gid / rc);
   MPI_Comm_split(MPI_COMM_WORLD, color, gid, &rcomm);

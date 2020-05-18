@@ -19,6 +19,8 @@ struct csr {
 
 /* globals - but only here */
 static int p         = 0;
+static int rr        = 0;
+static int rc        = 0;
 static int nid       = 0;  /* calling node id */
 static int nproc     = 0;  /* number of nodes */
 static int row_nid   = 0;
@@ -302,7 +304,7 @@ solve()
     uint   *aux_idx = (uint *)   xmalloc(sizeof(uint)   * my_nU);
     double *aux_max = (double *) xmalloc(sizeof(double) * my_nU);
 
-    for (i = 1; i < row_nproc; ++i) {
+    for (i = 1; i < rc; ++i) {
       MPI_Recv(aux_idx, my_nU, MPI_UNSIGNED, i, TAG, row_comm, &status);
       MPI_Recv(aux_max, my_nU, MPI_DOUBLE,   i, TAG, row_comm, &status);
       for (j = 0; j < my_nU; ++j) {
@@ -322,22 +324,22 @@ solve()
   /* global root node outputs result */
   if (0 == nid) {
     int size;
-    best = (uint *) xmalloc(sizeof(uint) * ceil(nU / col_nproc));
+    best = (uint *) xmalloc(sizeof(uint) * ceil(nU / rr));
 
     for (i = 0; i < my_nU; ++i) {
       printf("%u\n", my_idx[i]);
     }
 
-    for (i = 1; i < col_nproc; ++i) {
-      MPI_Recv(&size, 1,    MPI_INT,      i * row_nproc, TAG, MPI_COMM_WORLD, &status);
-      MPI_Recv(best,  size, MPI_UNSIGNED, i * row_nproc, TAG, MPI_COMM_WORLD, &status);
+    for (i = 1; i < rr; ++i) {
+      MPI_Recv(&size, 1,    MPI_INT,      i * rc, TAG, MPI_COMM_WORLD, &status);
+      MPI_Recv(best,  size, MPI_UNSIGNED, i * rc, TAG, MPI_COMM_WORLD, &status);
       for (j = 0; j < size; ++j) {
         printf("%u\n", best[j]);
       }
     }
 
     free(best);
-  } else if (0 == row_nid) {
+  } else if ((0 == row_nid) && (0 != col_nid)) {
     MPI_Send(&my_nU, 1,     MPI_INT,      0, TAG, MPI_COMM_WORLD);
     MPI_Send(my_idx, my_nU, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD);
   }
@@ -366,22 +368,30 @@ main(int argc, char* argv[])
   MPI_Comm_rank(MPI_COMM_WORLD, &nid);
   MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 
-  // FIXME: Support non-square grids
-  p = sqrt(nproc);
+  // lazy calc
+  for (int i = 1; i < 16; ++i) {
+    for (int j = 1; j < 16; ++j) {
+      if (i*j == nproc) {
+        rr = i;
+        rc = j;
+        break;
+      }
+    }
+  }
 
-  color = floor(nid / p);
+  color = floor(nid / rc);
   MPI_Comm_split(MPI_COMM_WORLD, color, nid, &row_comm);
   MPI_Comm_rank(row_comm, &row_nid);
   MPI_Comm_size(row_comm, &row_nproc);
 
-  color = (nid % p) + TAG;
+  color = (nid % rc) + TAG;
   MPI_Comm_split(MPI_COMM_WORLD, color, nid, &col_comm);
   MPI_Comm_rank(col_comm, &col_nid);
   MPI_Comm_size(col_comm, &col_nproc);
 
-  int cnt[row_nproc][col_nproc];
-  for (int i = 0; i < row_nproc; ++i) {
-    for (int j = 0; j < col_nproc; ++j) {
+  int cnt[rr][rc];
+  for (int i = 0; i < rc; ++i) {
+    for (int j = 0; j < rr; ++j) {
       cnt[i][j] = 0;
     }
   }
@@ -426,15 +436,15 @@ main(int argc, char* argv[])
       i = parse_uint(fp);
       j = parse_uint(fp);
       v = parse_double(fp); /* dummy parse */
-      x = get_idx(i, nU, p);
-      y = get_idx(j, nI, row_nproc);
+      x = get_idx(i, nU, rr);
+      y = get_idx(j, nI, rc);
       cnt[x][y]++;
     }
 
-    for (i = 0; i < p; ++i) {
-      for (j = 0; j < row_nproc; ++j) {
+    for (i = 0; i < rr; ++i) {
+      for (j = 0; j < rc; ++j) {
         if ((0 == i) && (0 == j))  continue;
-        MPI_Send(&cnt[i][j], 1, MPI_INT, i*p+j, TAG, MPI_COMM_WORLD);
+        MPI_Send(&cnt[i][j], 1, MPI_INT, i*rc+j, TAG, MPI_COMM_WORLD);
       }
     }
 
@@ -447,17 +457,17 @@ main(int argc, char* argv[])
       i = parse_uint(fp);
       j = parse_uint(fp);
       v = parse_double(fp);
-      x = get_idx(i, nU, p);
-      y = get_idx(j, nI, row_nproc);
+      x = get_idx(i, nU, rr);
+      y = get_idx(j, nI, rc);
       if ((0 == x) && (0 == y)) {
         A->row[ex] = i;
         A->col[ex] = j;
         A->val[ex] = v;
         ex++;
       } else {
-        MPI_Send(&i, 1, MPI_UNSIGNED, x*p+y, TAG, MPI_COMM_WORLD);
-        MPI_Send(&j, 1, MPI_UNSIGNED, x*p+y, TAG, MPI_COMM_WORLD);
-        MPI_Send(&v, 1, MPI_DOUBLE,   x*p+y, TAG, MPI_COMM_WORLD);
+        MPI_Send(&i, 1, MPI_UNSIGNED, x*rc+y, TAG, MPI_COMM_WORLD);
+        MPI_Send(&j, 1, MPI_UNSIGNED, x*rc+y, TAG, MPI_COMM_WORLD);
+        MPI_Send(&v, 1, MPI_DOUBLE,   x*rc+y, TAG, MPI_COMM_WORLD);
       }
     }
 
@@ -479,18 +489,19 @@ main(int argc, char* argv[])
 
     A = csr_matrix_init(nnz);
     
-    for (int i = 0; i < nnz; ++i) {
-      MPI_Recv(&A->row[i], 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
-      MPI_Recv(&A->col[i], 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
-      MPI_Recv(&A->val[i], 1, MPI_DOUBLE,   0, TAG, MPI_COMM_WORLD, &status);
+    for (size_t ij = 0; ij < nnz; ++ij) {
+      MPI_Recv(&A->row[ij], 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
+      MPI_Recv(&A->col[ij], 1, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD, &status);
+      MPI_Recv(&A->val[ij], 1, MPI_DOUBLE,   0, TAG, MPI_COMM_WORLD, &status);
     }
   }
 
+
   /* aux parameters */
-  low_L  = col_nid * nU / row_nproc;
-  low_R  = row_nid * nI / col_nproc;
-  high_L = (col_nid + 1) * nU / row_nproc;
-  high_R = (row_nid + 1) * nI / col_nproc;
+  low_L  = col_nid * nU / rr;
+  low_R  = row_nid * nI / rc;
+  high_L = (col_nid + 1) * nU / rr;
+  high_R = (row_nid + 1) * nI / rc;
   my_nU  = high_L - low_L;
   my_nI  = high_R - low_R;
   /* create matrices */
@@ -500,13 +511,24 @@ main(int argc, char* argv[])
   Rt     = matrix_init(my_nI, nF);
   B      = matrix_init(my_nU, my_nI);
 
+#if 0
+  printf("{rank = %d} -> {\n", nid);
+  printf("\t(row_nid=%d, col_nid=%d)\n", row_nid, col_nid);
+  printf("\t(low_L=%u, high_L=%u, my_nU=%u)\n", low_L, high_L, my_nU);
+  printf("\t(low_R=%u, high_R=%u, my_nI=%u)\n", low_R, high_R, my_nI);
+  for (int ij = 0; ij < nnz; ++ij) {
+    printf("\t(%u, %u, %lf)\n", A->row[ij]-low_L, A->col[ij]-low_R, A->val[ij]);
+  }
+  printf("}\n");
+#endif
+
   random_fill_L();
   random_fill_R();
   double secs;
   secs = - MPI_Wtime();
   solve();
   secs += MPI_Wtime();
-  
+
   // Redirect stdout to file and get time on stderr
   if (0 == nid) fprintf(stderr, "Time = %12.6f sec\n", secs);
 

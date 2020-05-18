@@ -430,14 +430,19 @@ main(int argc, char* argv[])
     else {
       /* FIXME: why bruteforce this calculation? ... */
       /* this just gives a 1D grid ... */
-      for (int i = 1; i < 16; ++i) 
-        for (int j = 1; j < 16; ++j)
+      int ie, je;
+      if (nU > nI) ie = np, je = np / 2;
+      else ie = np / 2, je = np;
+      for (int i = 1; i <= ie; ++i) 
+        for (int j = 1; j <= je; ++j)
           if (i * j == np) {
             rr = i, rc = j;
-            break;
           }
     }
   }
+
+  printf("rr=%d, rc=%d, np=%d\n", rr, rc, np);
+  die("");
 
   color = floor(gid / rc);
   MPI_Comm_split(MPI_COMM_WORLD, color, gid, &rcomm);

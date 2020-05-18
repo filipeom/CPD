@@ -1,4 +1,5 @@
 #include <mpi.h>
+#include <omp.h>
 #include <math.h>
 #include <stdio.h>
 #include <errno.h>
@@ -230,59 +231,83 @@ solve()
   uint   *best;
   uint   *my_idx;
   double *my_max;
-  size_t i, j, k, jx;
-  double tmp;
-  double *m1, *mt1;
-  double *m2, *mt2;
   MPI_Status status;
+  omp_lock_t *col_mutex;
 
-  memcpy(Lt, L, sizeof(double) * mU * nF);
-  memcpy(Rt, R, sizeof(double) * mI * nF);
-  /* factorization of L and R */
-  while (N--) {
-    if (rid) memset(L, '\x00', sizeof(double) * mU * nF);
-    if (cid) memset(R, '\x00', sizeof(double) * mI * nF);
-
-    for (i = 0; i < mU; ++i) {
-      m1 = &L[i * nF], mt1 = &Lt[i * nF];
-      for (jx = A->row[i]; jx < A->row[i + 1]; ++jx) {
-        j = A->col[jx] - sR;
-        m2 = &R[j * nF], mt2 = &Rt[j * nF];
-        tmp = a * 2 * (A->val[jx] - dot_prod(mt1, mt2, nF));
-        for (k = 0; k < nF; ++k) {
-          m1[k] += tmp * mt2[k];
-          m2[k] += tmp * mt1[k];
-        }
-      }
-    }
-
-    MPI_Barrier(rcomm);
-    MPI_Allreduce(L, Lt, mU * nF, MPI_DOUBLE, MPI_SUM, rcomm);
-
-    MPI_Barrier(ccomm);
-    MPI_Allreduce(R, Rt, mI * nF, MPI_DOUBLE, MPI_SUM, ccomm);
-
-    memcpy(L, Lt, sizeof(double) * mU * nF);
-    memcpy(R, Rt, sizeof(double) * mI * nF);
-  } /* end while */
+  col_mutex = (omp_lock_t *) malloc(sizeof(omp_lock_t) * mI);
+  for (size_t j = 0; j < mI; ++j)
+    omp_init_lock(&col_mutex[j]);
 
   my_idx = (uint *)   xmalloc(sizeof(uint)   * mU);
   my_max = (double *) xmalloc(sizeof(double) * mU);
 
-  for (i = 0; i < mU; ++i) {
-    my_max[i] = 0;
-    jx = A->row[i];
-    mt1 = &Lt[i * nF];
-    for (j = 0, mt2 = &Rt[j * nF]; j < mI; ++j, mt2 += nF) {
-      if ((A->row[i + 1] - A->row[i]) &&
-          (A->row[i + 1] > jx) &&
-          ((A->col[jx] - sR) == j)) {
-        jx++;
-      } else {
-        tmp = dot_prod(mt1, mt2, nF);
-        if (tmp > my_max[i]) {
-          my_max[i] = tmp;
-          my_idx[i] = j + sR;
+  #pragma omp parallel
+  {
+    size_t i, j, k, jx;
+    double tmp;
+    double *m1, *mt1;
+    double *m2, *mt2;
+
+    #pragma omp single
+    {
+      memcpy(Lt, L, sizeof(double) * mU * nF);
+      memcpy(Rt, R, sizeof(double) * mI * nF);
+    }
+
+    /* factorization of L and R */
+    for (size_t it = N; it--; ) {
+      #pragma omp single 
+      {
+        if (rid) memset(L, '\x00', sizeof(double) * mU * nF);
+        if (cid) memset(R, '\x00', sizeof(double) * mI * nF);
+      }
+
+      #pragma omp for schedule(guided)
+      for (i = 0; i < mU; ++i) {
+        m1 = &L[i * nF], mt1 = &Lt[i * nF];
+        for (jx = A->row[i]; jx < A->row[i + 1]; ++jx) {
+          j = A->col[jx] - sR;
+          m2 = &R[j * nF], mt2 = &Rt[j * nF];
+          tmp = a * 2 * (A->val[jx] - dot_prod(mt1, mt2, nF));
+          omp_set_lock(&col_mutex[j]);
+          for (k = 0; k < nF; ++k) {
+            m1[k] += tmp * mt2[k];
+            m2[k] += tmp * mt1[k];
+          }
+          omp_unset_lock(&col_mutex[j]);
+        }
+      }
+      
+      #pragma omp single
+      {
+        MPI_Barrier(rcomm);
+        MPI_Allreduce(L, Lt, mU * nF, MPI_DOUBLE, MPI_SUM, rcomm);
+
+        MPI_Barrier(ccomm);
+        MPI_Allreduce(R, Rt, mI * nF, MPI_DOUBLE, MPI_SUM, ccomm);
+
+        memcpy(L, Lt, sizeof(double) * mU * nF);
+        memcpy(R, Rt, sizeof(double) * mI * nF);
+      }
+      #pragma omp barrier
+    } /* end while */
+
+    #pragma omp for schedule(static) nowait
+    for (i = 0; i < mU; ++i) {
+      my_max[i] = 0;
+      jx = A->row[i];
+      mt1 = &Lt[i * nF];
+      for (j = 0, mt2 = &Rt[j * nF]; j < mI; ++j, mt2 += nF) {
+        if ((A->row[i + 1] - A->row[i]) &&
+            (A->row[i + 1] > jx) &&
+            ((A->col[jx] - sR) == j)) {
+          jx++;
+        } else {
+          tmp = dot_prod(mt1, mt2, nF);
+          if (tmp > my_max[i]) {
+            my_max[i] = tmp;
+            my_idx[i] = j + sR;
+          }
         }
       }
     }
@@ -293,10 +318,10 @@ solve()
     uint   *aux_idx = (uint *)   xmalloc(sizeof(uint)   * mU);
     double *aux_max = (double *) xmalloc(sizeof(double) * mU);
 
-    for (i = 1; i < rc; ++i) {
+    for (size_t i = 1; i < rc; ++i) {
       MPI_Recv(aux_idx, mU, MPI_UNSIGNED, i, TAG, rcomm, &status);
       MPI_Recv(aux_max, mU, MPI_DOUBLE,   i, TAG, rcomm, &status);
-      for (j = 0; j < mU; ++j) {
+      for (size_t j = 0; j < mU; ++j) {
         if (aux_max[j] > my_max[j]) {
           my_max[j] = aux_max[j];
           my_idx[j] = aux_idx[j];
@@ -315,14 +340,14 @@ solve()
     int size;
     best = (uint *) xmalloc(sizeof(uint) * ceil(nU / rr));
 
-    for (i = 0; i < mU; ++i) {
+    for (size_t i = 0; i < mU; ++i) {
       printf("%u\n", my_idx[i]);
     }
 
-    for (i = 1; i < rr; ++i) {
+    for (size_t i = 1; i < rr; ++i) {
       MPI_Recv(&size, 1,    MPI_INT,      i * rc, TAG, MPI_COMM_WORLD, &status);
       MPI_Recv(best,  size, MPI_UNSIGNED, i * rc, TAG, MPI_COMM_WORLD, &status);
-      for (j = 0; j < size; ++j) {
+      for (size_t j = 0; j < size; ++j) {
         printf("%u\n", best[j]);
       }
     }
@@ -333,6 +358,10 @@ solve()
     MPI_Send(my_idx, mU, MPI_UNSIGNED, 0, TAG, MPI_COMM_WORLD);
   }
 
+  for (size_t j = 0; j < mI; ++j)
+    omp_destroy_lock(&col_mutex[j]);
+
+  free(col_mutex);
   free(my_idx);
   free(my_max);
 }
@@ -399,7 +428,7 @@ main(int argc, char* argv[])
     int inp = sqrt(np);
     if (dnp == inp) { rr = rc = inp; } /* prefer square matrices */
     else {
-      /* FIXME: why bruteforce this calculation? ..............................................................................................................*/
+      /* FIXME: why bruteforce this calculation? ... */
       /* this just gives a 1D grid ... */
       for (int i = 1; i < 16; ++i) 
         for (int j = 1; j < 16; ++j)
@@ -409,9 +438,6 @@ main(int argc, char* argv[])
           }
     }
   }
-
-  printf("rr=%d, rc=%d\n", rr, rc);
-  die("");
 
   color = floor(gid / rc);
   MPI_Comm_split(MPI_COMM_WORLD, color, gid, &rcomm);
@@ -515,18 +541,6 @@ main(int argc, char* argv[])
   Lt = matrix_init(mU, nF);
   R  = matrix_init(mI, nF);
   Rt = matrix_init(mI, nF);
-
-#if 0
-  printf("{rank = %d} -> {\n", gid);
-  printf("\t(rid=%d, cid=%d)\n", rid, cid);
-  printf("\t(sL=%u, eL=%u, mU=%u)\n", sL, eL, mU);
-  printf("\t(sR=%u, eR=%u, mI=%u)\n", sR, eR, mI);
-  for (int i = 0; i < mU; ++i) {
-    for (int jx = A->row[i]; jx < A->row[i + 1]; ++jx)
-      printf("\t(%u, %u, %lf)\n", i, A->col[jx]-sR, A->val[jx]);
-  }
-  printf("}\n");
-#endif
 
   random_fill_L();
   random_fill_R();

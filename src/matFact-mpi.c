@@ -262,6 +262,7 @@ solve()
         if (cid) memset(R, '\x00', sizeof(double) * mI * nF);
       }
 
+
       #pragma omp for schedule(guided)
       for (i = 0; i < mU; ++i) {
         m1 = &L[i * nF], mt1 = &Lt[i * nF];
@@ -367,11 +368,11 @@ solve()
 }
 
 int
-get_idx(uint v, uint n, int p)
+get_idx(uint x, uint n, int p)
 {
   for (int id = 1; id <= p; ++id)
-    if ((v >= ((id - 1) * n / p)) &&
-        (v <  (id * n / p)))
+    if ((x >= ((id - 1) * n / p)) &&
+        (x < (id * n / p)))
       return id-1;
   return 0;
 }
@@ -428,27 +429,21 @@ main(int argc, char* argv[])
     int inp = sqrt(np);
     if (dnp == inp) { rr = rc = inp; } /* prefer square matrices */
     else {
-      /* FIXME: why bruteforce this calculation? ... */
-      /* this just gives a 1D grid ... */
       int ie, je;
-      if (nU > nI) ie = np, je = np / 2;
+      if (nU < nI) ie = np, je = np / 2;
       else ie = np / 2, je = np;
-      for (int i = 1; i <= ie; ++i) 
+      for (int i = 1; i <= ie; ++i)
         for (int j = 1; j <= je; ++j)
-          if (i * j == np) {
+          if (i * j == np)
             rr = i, rc = j;
-          }
     }
   }
-
-  printf("rr=%d, rc=%d, np=%d\n", rr, rc, np);
-  die("");
 
   color = floor(gid / rc);
   MPI_Comm_split(MPI_COMM_WORLD, color, gid, &rcomm);
   MPI_Comm_rank(rcomm, &rid);
 
-  color = (gid % rc) + TAG;
+  color = gid % rc;
   MPI_Comm_split(MPI_COMM_WORLD, color, gid, &ccomm);
   MPI_Comm_rank(ccomm, &cid);
 
@@ -470,8 +465,8 @@ main(int argc, char* argv[])
     long int nnz_pos;
     int cnt[rr][rc];
 
-    for (i = 0; i < rc; ++i)
-      for (j = 0; j < rr; ++j)
+    for (i = 0; i < rr; ++i)
+      for (j = 0; j < rc; ++j)
         cnt[i][j] = 0;
 
     nnz_pos = ftell(fp);

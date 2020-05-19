@@ -541,18 +541,9 @@ main(int argc, char* argv[])
   Lt = matrix_init(mU, nF);
   R  = matrix_init(mI, nF);
   Rt = matrix_init(mI, nF);
-
   random_fill_L();
   random_fill_R();
-
-  double secs;
-  secs = - MPI_Wtime();
   solve();
-  secs += MPI_Wtime();
-
-  // Redirect stdout to file and get time on stderr
-  if (0 == gid) fprintf(stderr, "Time = %12.6f sec\n", secs);
-
   matrix_destroy(&Rt);
   matrix_destroy(&R);
   matrix_destroy(&Lt);
